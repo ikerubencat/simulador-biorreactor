@@ -8,6 +8,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Archivos de sistema
+# Archivos de sistema y credenciales locales
 .DS_Store
 Thumbs.db
+.env
+.git-credentials
+
