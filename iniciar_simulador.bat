@@ -9,5 +9,5 @@ echo   No cierres esta ventana mientras uses la aplicacion.
 echo ========================================================
 echo.
 
-.\.venv\Scripts\streamlit.exe run app.py --server.port 8501
+echo.| .\.venv\Scripts\streamlit.exe run app.py --server.port 8501 --browser.gatherUsageStats false
 pause
