@@ -12,8 +12,15 @@ Arquitectura modular en Streamlit, NumPy y Plotly con 4 pestañas:
 """
 
 from datetime import datetime
+import io
 from typing import Any, Dict, List, Sequence, Tuple
 
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.cm import ScalarMappable
+from matplotlib.colors import LinearSegmentedColormap, Normalize
+from matplotlib.gridspec import GridSpec
 import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
@@ -91,6 +98,7 @@ CELL_LINES: Dict[str, Dict[str, Any]] = {
         "extraction": "Permeado libre de células -> Cromatografía de afinidad (Proteína A) + Ultrafiltración",
         "suppliers": "ATCC (CCL-61), ECACC | Medio: Gibco / Sigma-Aldrich",
         "cost_cell_usd": "$480 – $650 USD (vial criopreservado)",
+        "cost_vial_usd": 565.0,
         "cost_medium_usd_l": 45.0,
     },
     "HEK293 (Humana — Vacunas/Vectores)": {
@@ -108,6 +116,7 @@ CELL_LINES: Dict[str, Dict[str, Any]] = {
         "extraction": "Cosecha del sobrenadante o lisis suave -> Clarificación + Cromatografía de intercambio iónico",
         "suppliers": "ATCC (CRL-1573), DSMZ | Medio: Thermo Fisher (Gibco)",
         "cost_cell_usd": "$420 – $600 USD",
+        "cost_vial_usd": 510.0,
         "cost_medium_usd_l": 55.0,
     },
     "Hibridoma Sp2/0 (Anticuerpos)": {
@@ -125,6 +134,7 @@ CELL_LINES: Dict[str, Dict[str, Any]] = {
         "extraction": "Perfusión continua -> Precipitación / Proteína G",
         "suppliers": "ATCC (CRL-1581), ECACC | Medio: Corning / Cytiva",
         "cost_cell_usd": "$350 – $520 USD",
+        "cost_vial_usd": 435.0,
         "cost_medium_usd_l": 38.0,
     },
     "Saccharomyces / Pichia (Levadura)": {
@@ -142,6 +152,7 @@ CELL_LINES: Dict[str, Dict[str, Any]] = {
         "extraction": "Secreción al medio -> Microfiltración + Diálisis / Ultrafiltración TFF",
         "suppliers": "ATCC, DSMZ | Reactivos: Sigma-Aldrich / BD Difco",
         "cost_cell_usd": "$150 – $280 USD",
+        "cost_vial_usd": 215.0,
         "cost_medium_usd_l": 8.0,
     },
     "Escherichia coli (Bacteria — Bacilo)": {
@@ -159,6 +170,7 @@ CELL_LINES: Dict[str, Dict[str, Any]] = {
         "extraction": "Lisis celular (homogeneización) -> Centrifugación + Purificación de cuerpos de inclusión",
         "suppliers": "ATCC, Addgene, NEB | Medio: Merck / Sigma-Aldrich",
         "cost_cell_usd": "$80 – $190 USD",
+        "cost_vial_usd": 135.0,
         "cost_medium_usd_l": 3.5,
     },
 }
@@ -172,6 +184,7 @@ MESH_MATERIALS: Dict[str, Dict[str, Any]] = {
         "extrudable": "No (tejido metálico por alambre)",
         "autoclave": "Sí (121 °C, reutilizable indefinidamente)",
         "supplier": "McMaster-Carr / W.S. Tyler (~$45 – $110 USD/m²)",
+        "cost_unit_usd": 75.0,
     },
     "Acero Inoxidable 316L — Tejido Holandés": {
         "open_area": 0.18,
@@ -181,6 +194,7 @@ MESH_MATERIALS: Dict[str, Dict[str, Any]] = {
         "extrudable": "No (alta resistencia mecánica)",
         "autoclave": "Sí (121 °C, soporta alto ΔP)",
         "supplier": "Bopp / McMaster-Carr (~$95 – $220 USD/m²)",
+        "cost_unit_usd": 155.0,
     },
     "PVDF (Polímero biocompatible)": {
         "open_area": 0.45,
@@ -190,6 +204,7 @@ MESH_MATERIALS: Dict[str, Dict[str, Any]] = {
         "extrudable": "Sí (fibra hueca o lámina porosa)",
         "autoclave": "Sí (hasta 125 °C)",
         "supplier": "Millipore / Sigma-Aldrich (~$60 – $150 USD)",
+        "cost_unit_usd": 105.0,
     },
     "PEEK (Polímero alta temperatura)": {
         "open_area": 0.30,
@@ -199,6 +214,7 @@ MESH_MATERIALS: Dict[str, Dict[str, Any]] = {
         "extrudable": "Sí (filamento longitudinal / moldeo)",
         "autoclave": "Sí (121–134 °C sin deformarse)",
         "supplier": "Goodfellow / Victrex (~$120 – $260 USD)",
+        "cost_unit_usd": 190.0,
     },
     "PCL (Policaprolactona — Biopolímero)": {
         "open_area": 0.38,
@@ -208,6 +224,7 @@ MESH_MATERIALS: Dict[str, Dict[str, Any]] = {
         "extrudable": "Sí (funde a 60 °C, ideal prototipos longitudinales)",
         "autoclave": "No (se funde > 60 °C; esterilizar con etanol 70% / UV)",
         "supplier": "Sigma-Aldrich (~$50 – $90 USD / 100 g)",
+        "cost_unit_usd": 65.0,
     },
     "PLA (Ácido Poliláctico — Impresión 3D)": {
         "open_area": 0.35,
@@ -217,6 +234,7 @@ MESH_MATERIALS: Dict[str, Dict[str, Any]] = {
         "extrudable": "Sí (extrusión longitudinal e impresión 3D)",
         "autoclave": "No (se ablanda > 60 °C; usar UV / etanol)",
         "supplier": "Filamento grado médico / NatureWorks (~$25 – $60 USD/kg)",
+        "cost_unit_usd": 35.0,
     },
 }
 
@@ -348,7 +366,13 @@ def _form_defaults(key: str, defaults: Dict[str, Any]) -> Dict[str, Any]:
     return st.session_state[key]
 
 
-def _light_scene(xr: List[float], yr: List[float], zr: List[float], z_title: str = "Altura Z (mm)") -> Dict[str, Any]:
+def _light_scene(
+    xr: List[float],
+    yr: List[float],
+    zr: List[float],
+    z_title: str = "Altura Z (mm)",
+    xy_unit: str = "mm",
+) -> Dict[str, Any]:
     """Configuración de ejes claros y pasteles para escenas 3D."""
     axis_style = dict(
         backgroundcolor="#f8fafc",
@@ -357,10 +381,109 @@ def _light_scene(xr: List[float], yr: List[float], zr: List[float], z_title: str
         showbackground=True,
     )
     return dict(
-        xaxis=dict(title="X (mm)", range=xr, **axis_style),
-        yaxis=dict(title="Y (mm)", range=yr, **axis_style),
+        xaxis=dict(title=f"X ({xy_unit})", range=xr, **axis_style),
+        yaxis=dict(title=f"Y ({xy_unit})", range=yr, **axis_style),
         zaxis=dict(title=z_title, range=zr, **axis_style),
     )
+
+
+def _build_3d_arrow_traces(
+    x: np.ndarray,
+    y: np.ndarray,
+    z: np.ndarray,
+    u: np.ndarray,
+    v: np.ndarray,
+    w: np.ndarray,
+    max_arrow_len: float,
+    vmax: float,
+    colorscale: List[Any],
+    show_colorbar: bool = True,
+    name: str = "Vectores 3D",
+    line_width: float = 3.6,
+    head_ratio: float = 0.30,
+    opacity: float = 0.92,
+) -> Tuple[go.Scatter3d, go.Cone]:
+    """Construye flechas 3D reales (eje Scatter3d + punta pequeña Cone con anchor='tip')."""
+    xa = np.asarray(x, dtype=float).ravel()
+    ya = np.asarray(y, dtype=float).ravel()
+    za = np.asarray(z, dtype=float).ravel()
+    ua = np.asarray(u, dtype=float).ravel()
+    va = np.asarray(v, dtype=float).ravel()
+    wa = np.asarray(w, dtype=float).ravel()
+
+    mag = np.sqrt(ua**2 + va**2 + wa**2)
+    vmax_s = max(float(vmax), 1e-9)
+    mask = mag > 1e-9
+
+    if not np.any(mask):
+        empty_line = go.Scatter3d(
+            x=[], y=[], z=[], mode="lines",
+            line=dict(color=[], colorscale=colorscale, cmin=0.0, cmax=vmax_s, width=line_width),
+            name=f"{name} (ejes)", hoverinfo="skip", showlegend=False,
+        )
+        empty_cone = go.Cone(
+            x=[], y=[], z=[], u=[], v=[], w=[], colorscale=colorscale,
+            sizemode="raw", sizeref=1.0, cmin=0.0, cmax=vmax_s, anchor="tip",
+            showscale=show_colorbar, name=name,
+        )
+        return empty_line, empty_cone
+
+    xa, ya, za = xa[mask], ya[mask], za[mask]
+    ua, va, wa, mag = ua[mask], va[mask], wa[mask], mag[mask]
+    dx = ua / mag
+    dy = va / mag
+    dz = wa / mag
+
+    lengths = max_arrow_len * np.clip(mag / vmax_s, 0.14, 1.0)
+    xt = xa + lengths * dx
+    yt = ya + lengths * dy
+    zt = za + lengths * dz
+
+    n = len(xa)
+    sx = np.empty((n, 3), dtype=object)
+    sy = np.empty((n, 3), dtype=object)
+    sz = np.empty((n, 3), dtype=object)
+    sc = np.empty((n, 3), dtype=float)
+    sx[:, 0], sx[:, 1], sx[:, 2] = xa, xt, None
+    sy[:, 0], sy[:, 1], sy[:, 2] = ya, yt, None
+    sz[:, 0], sz[:, 1], sz[:, 2] = za, zt, None
+    sc[:, 0], sc[:, 1], sc[:, 2] = mag, mag, 0.0
+
+    shaft_trace = go.Scatter3d(
+        x=sx.ravel().tolist(),
+        y=sy.ravel().tolist(),
+        z=sz.ravel().tolist(),
+        mode="lines",
+        line=dict(color=sc.ravel().tolist(), colorscale=colorscale, cmin=0.0, cmax=vmax_s, width=line_width),
+        opacity=opacity,
+        name=f"{name} (ejes)",
+        hoverinfo="skip",
+        showlegend=False,
+    )
+
+    cone_kwargs: Dict[str, Any] = {}
+    if show_colorbar:
+        cone_kwargs["colorbar"] = dict(title="|v| (m/s)", thickness=14, len=0.72)
+
+    head_trace = go.Cone(
+        x=xt, y=yt, z=zt,
+        u=ua, v=va, w=wa,
+        colorscale=colorscale,
+        sizemode="raw",
+        sizeref=(head_ratio * max_arrow_len) / vmax_s,
+        cmin=0.0,
+        cmax=vmax_s,
+        anchor="tip",
+        showscale=show_colorbar,
+        opacity=opacity,
+        name=name,
+        hovertemplate=(
+            "x=%{x:.1f} · y=%{y:.1f} · z=%{z:.1f}<br>"
+            "vx=%{u:.3f} · vy=%{v:.3f} · vz=%{w:.3f} m/s<extra>Vector</extra>"
+        ),
+        **cone_kwargs,
+    )
+    return shaft_trace, head_trace
 
 
 def _quiver_2d_coords(
@@ -729,41 +852,238 @@ def build_filtration_charts(sim: Dict[str, Any], horizon_days: int) -> Tuple[go.
     return f1, f2
 
 
-def build_filtration_vector_figures(sim: Dict[str, Any]) -> Tuple[go.Figure, go.Figure]:
-    """Construye el corte horizontal 2D del campo vectorial (v_θ + v_r) y perfiles radiales."""
-    vf = sim["vel_field"]
+def _filtration_velocity_transient(
+    r_mm: np.ndarray | float,
+    theta: np.ndarray | float,
+    z_mm: np.ndarray | float,
+    t_s: float,
+    vf: Dict[str, float],
+    w_vis: float,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, float]:
+    """Campo de velocidades transitorio alrededor de la malla rotatoria (v_r, v_z, v_theta, f_arr)."""
     omega = vf["omega"]
     v_suc_ms = vf["v_suc_ms"]
     r_mesh = vf["r_mesh_mm"]
-    r_vessel = vf["r_vessel_mm"]
+    height = vf["height_mm"]
     r_mesh_m = r_mesh / 1000.0
 
-    def _filt_vel(r_mm: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        r_safe = np.maximum(r_mm, 1e-6)
-        vt = np.where(
-            r_mm >= r_mesh,
-            omega * r_mesh_m * (r_mesh / r_safe) ** 1.5,
-            omega * (r_mm / 1000.0),
+    r_arr = np.asarray(r_mm, dtype=float)
+    th_arr = np.asarray(theta, dtype=float)
+    z_arr = np.asarray(z_mm, dtype=float)
+    r_safe = np.maximum(r_arr, 1e-6)
+
+    f_arr = float(0.25 + 0.75 * (1.0 - np.exp(-float(t_s) / 1.8)))
+    g_rib = 1.0 + 0.10 * np.exp(-((r_arr - r_mesh) / (0.35 * r_mesh)) ** 2) * np.cos(4.0 * (th_arr - w_vis * t_s))
+
+    vt = np.where(
+        r_arr >= r_mesh,
+        f_arr * g_rib * omega * r_mesh_m * (r_mesh / r_safe) ** 1.5,
+        f_arr * omega * (r_arr / 1000.0),
+    )
+    vr = np.where(
+        r_arr >= r_mesh,
+        -f_arr * v_suc_ms * np.sqrt(r_mesh / r_safe),
+        -f_arr * v_suc_ms * (r_arr / r_mesh),
+    )
+    vz = np.where(
+        r_arr >= r_mesh,
+        0.015 * f_arr * np.cos(2.0 * np.pi * z_arr / height),
+        -0.025 * f_arr,
+    )
+    return vr, vz, vt, f_arr
+
+
+@st.cache_data(show_spinner=False)
+def run_filtration_vector_animation(
+    vf: Dict[str, float],
+    w_vis: float,
+    duration_s: float = ANIM_SECONDS,
+    n_frames: int = N_FRAMES,
+) -> Dict[str, Any]:
+    """Integra 128 flechas 3D del campo vectorial alrededor de la malla durante 10 s."""
+    r_mesh = vf["r_mesh_mm"]
+    r_vessel = vf["r_vessel_mm"]
+    height = vf["height_mm"]
+
+    rg, thg, zg = np.meshgrid(
+        np.linspace(0.45 * r_mesh, 0.90 * r_vessel, 4),
+        np.linspace(0.0, 2.0 * np.pi, 8, endpoint=False),
+        np.linspace(0.10 * height, 0.90 * height, 4),
+        indexing="ij",
+    )
+    r_cur = rg.ravel().copy()
+    th_cur = thg.ravel().copy()
+    z_cur = zg.ravel().copy()
+
+    sub = 3
+    dt_anim = duration_s / (n_frames * sub)
+    dt_adv = (2.0 / duration_s) * dt_anim
+
+    xs, ys, zs, vxs, vys, vzs, spds, f_arrs, angs = [], [], [], [], [], [], [], [], []
+    t_grid = np.linspace(0.0, duration_s, n_frames + 1)
+
+    for k in range(n_frames + 1):
+        t_k = float(t_grid[k])
+        vr, vz, vt, f_arr = _filtration_velocity_transient(r_cur, th_cur, z_cur, t_k, vf, w_vis)
+        xs.append(r_cur * np.cos(th_cur))
+        ys.append(r_cur * np.sin(th_cur))
+        zs.append(z_cur.copy())
+        vxs.append(vr * np.cos(th_cur) - vt * np.sin(th_cur))
+        vys.append(vr * np.sin(th_cur) + vt * np.cos(th_cur))
+        vzs.append(vz)
+        spds.append(np.sqrt(vr**2 + vz**2 + vt**2))
+        f_arrs.append(f_arr)
+        angs.append(float(w_vis * t_k))
+
+        if k == n_frames:
+            break
+        for s_idx in range(sub):
+            t_sub = t_k + s_idx * dt_anim
+            vr1, vz1, vt1, _ = _filtration_velocity_transient(r_cur, th_cur, z_cur, t_sub, vf, w_vis)
+            # Convertir velocidades (m/s) a mm/s para posiciones en mm
+            rm = np.clip(r_cur + 0.5 * dt_adv * (vr1 * 1000.0), 3.0, 0.96 * r_vessel)
+            thm = th_cur + 0.5 * dt_adv * (vt1 * 1000.0) / np.maximum(r_cur, 4.0)
+            zm = np.clip(z_cur + 0.5 * dt_adv * (vz1 * 1000.0), 4.0, height - 4.0)
+
+            vr2, vz2, vt2, _ = _filtration_velocity_transient(rm, thm, zm, t_sub + 0.5 * dt_anim, vf, w_vis)
+            th_cur = (th_cur + dt_adv * (vt2 * 1000.0) / np.maximum(rm, 4.0)) % (2.0 * np.pi)
+            r_cur = np.clip(r_cur + dt_adv * (vr2 * 1000.0), 3.0, 0.96 * r_vessel)
+            z_cur = np.clip(z_cur + dt_adv * (vz2 * 1000.0), 4.0, height - 4.0)
+
+            # Reciclar flechas que llegan al fondo del colector interno para mantener poblado el campo
+            reseed = (r_cur < 0.35 * r_mesh) & (z_cur <= 8.0)
+            if np.any(reseed):
+                r_cur[reseed] = 0.88 * r_vessel
+                z_cur[reseed] = 0.88 * height
+
+    spd_arr = np.array(spds)
+    return {
+        "x": np.array(xs),
+        "y": np.array(ys),
+        "z": np.array(zs),
+        "vx": np.array(vxs),
+        "vy": np.array(vys),
+        "vz": np.array(vzs),
+        "speed": spd_arr,
+        "t": t_grid,
+        "f_arr": np.array(f_arrs),
+        "angle_mesh": np.array(angs),
+        "vmax_global": float(np.max(spd_arr)) or 1.0,
+    }
+
+
+def build_filtration_vector_3d_figure(
+    sim: Dict[str, Any],
+    vec_anim: Dict[str, Any],
+    paused_frame: int | None = None,
+) -> go.Figure:
+    """Construye el campo vectorial 3D animado (10 s) o congelado en paused_frame alrededor de la malla."""
+    g = sim["geometry"]
+    r_mesh, r_vessel, h = g["r_mesh"], g["r_vessel"], g["height"]
+    vmax = vec_anim["vmax_global"]
+    pastel_vel = [[0.0, "#74c0fc"], [0.35, "#63e6be"], [0.7, "#ffe066"], [1.0, "#ff6b6b"]]
+
+    th = np.linspace(0, 2 * np.pi, 45)
+    zz = np.linspace(0, h, 20)
+    thm, zm = np.meshgrid(th, zz)
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Surface(
+            x=r_mesh * np.cos(thm), y=r_mesh * np.sin(thm), z=zm,
+            name="Malla rotatoria", showscale=False, opacity=0.30,
+            colorscale=[[0, PASTEL["mesh"]], [1, PASTEL["mesh_dark"]]], hoverinfo="name",
         )
-        vr = np.where(
-            r_mm >= r_mesh,
-            -v_suc_ms * np.sqrt(r_mesh / r_safe),
-            -v_suc_ms * (r_mm / r_mesh),
+    )
+    fig.add_trace(
+        go.Surface(
+            x=r_vessel * np.cos(thm), y=r_vessel * np.sin(thm), z=zm,
+            name="Pared del tanque", showscale=False, opacity=0.08,
+            colorscale=[[0, PASTEL["wall"]], [1, "#f1f5f9"]], hoverinfo="skip",
         )
-        return vt, vr
+    )
+
+    def rib_trace(k: int) -> go.Scatter3d:
+        a = vec_anim["angle_mesh"][k]
+        xr, yr, zr = [], [], []
+        for aa in (a, a + np.pi):
+            xr += [r_mesh * np.cos(aa)] * 2 + [None]
+            yr += [r_mesh * np.sin(aa)] * 2 + [None]
+            zr += [0, h, None]
+        return go.Scatter3d(
+            x=xr, y=yr, z=zr, mode="lines", name="Marca de giro",
+            line=dict(color=PASTEL["rib"], width=7), hoverinfo="skip",
+        )
+
+    def arrow_traces(k: int) -> Tuple[go.Scatter3d, go.Cone]:
+        return _build_3d_arrow_traces(
+            vec_anim["x"][k], vec_anim["y"][k], vec_anim["z"][k],
+            vec_anim["vx"][k], vec_anim["vy"][k], vec_anim["vz"][k],
+            max_arrow_len=0.25 * r_vessel,
+            vmax=vmax,
+            colorscale=pastel_vel,
+            show_colorbar=True,
+            name="Vectores 3D",
+            line_width=3.5,
+            head_ratio=0.30,
+        )
+
+    k0 = 0 if paused_frame is None else int(np.clip(paused_frame, 0, len(vec_anim["t"]) - 1))
+    s0, h0 = arrow_traces(k0)
+    fig.add_trace(rib_trace(k0))  # 2
+    fig.add_trace(s0)             # 3
+    fig.add_trace(h0)             # 4
+
+    scene = _light_scene([-r_vessel * 1.08, r_vessel * 1.08], [-r_vessel * 1.08, r_vessel * 1.08], [0, h])
+    scene["aspectmode"] = "manual"
+    scene["aspectratio"] = dict(x=1.0, y=1.0, z=1.05)
+    scene["camera"] = dict(eye=dict(x=1.55, y=1.45, z=0.85))
+
+    if paused_frame is None:
+        frames = [
+            go.Frame(data=[rib_trace(k), *arrow_traces(k)], traces=[2, 3, 4], name=str(k))
+            for k in range(len(vec_anim["t"]))
+        ]
+        fig.update_layout(
+            template="plotly_white", height=480, margin=dict(l=0, r=0, t=40, b=0),
+            title="Simulación 3D de Vectores de Velocidad (10 s)", showlegend=False, scene=scene,
+        )
+        return add_animation_controls(fig, frames, [f"{t:.1f} s" for t in vec_anim["t"]], "Tiempo: ")
+
+    t_k = float(vec_anim["t"][k0])
+    fig.update_layout(
+        template="plotly_white", height=480, margin=dict(l=0, r=0, t=40, b=0),
+        title=f"Vista 3D Pausada — t = {t_k:.1f} s", showlegend=False, scene=scene,
+    )
+    return fig
+
+
+def build_filtration_vector_figures(sim: Dict[str, Any], t_s: float = 10.0) -> Tuple[go.Figure, go.Figure]:
+    """Construye el corte horizontal 2D del campo vectorial (v_θ + v_r) y perfiles radiales en t = t_s."""
+    vf = sim["vel_field"]
+    r_mesh = vf["r_mesh_mm"]
+    r_vessel = vf["r_vessel_mm"]
+    w_vis = sim["w_vis"]
+    z_mid = vf["height_mm"] * 0.5
 
     # 1. Corte horizontal 2D (plano x-y)
     grid = np.linspace(-r_vessel, r_vessel, 61)
     gx, gy = np.meshgrid(grid, grid)
     gr = np.hypot(gx, gy)
-    vt_g, vr_g = _filt_vel(gr)
-    vmag_g = np.where(gr <= r_vessel, np.hypot(vt_g, vr_g), np.nan)
+    gth = np.arctan2(gy, gx)
+    vr_g, vz_g, vt_g, _ = _filtration_velocity_transient(gr, gth, np.full_like(gr, z_mid), t_s, vf, w_vis)
+    vmag_g = np.where(gr <= r_vessel, np.sqrt(vt_g**2 + vr_g**2 + vz_g**2), np.nan)
+
+    # Referencia máxima en t = 10 s para que se note la aceleración al mover el slider de tiempo
+    vr_ref, vz_ref, vt_ref, _ = _filtration_velocity_transient(gr, gth, np.full_like(gr, z_mid), ANIM_SECONDS, vf, w_vis)
+    vmax_ref = float(np.nanmax(np.where(gr <= r_vessel, np.sqrt(vt_ref**2 + vr_ref**2 + vz_ref**2), np.nan))) or 1.0
 
     pastel_vel = [[0.0, "#e7f5ff"], [0.3, "#74c0fc"], [0.55, "#63e6be"], [0.8, "#ffe066"], [1.0, "#ff6b6b"]]
     fig_xy = go.Figure()
     fig_xy.add_trace(
         go.Heatmap(
             x=grid, y=grid, z=vmag_g,
+            zmin=0.0, zmax=vmax_ref * 1.05,
             colorscale=pastel_vel,
             colorbar=dict(title="|v| (m/s)", thickness=14, len=0.82),
             hovertemplate="x=%{x:.1f} mm · y=%{y:.1f} mm<br>|v|=%{z:.3f} m/s<extra></extra>",
@@ -775,14 +1095,14 @@ def build_filtration_vector_figures(sim: Dict[str, Any]) -> Tuple[go.Figure, go.
     qr_g = np.hypot(qx_g, qy_g)
     q_mask = (qr_g >= 6.0) & (qr_g <= r_vessel * 0.94)
     qx_v, qy_v, qr_v = qx_g[q_mask], qy_g[q_mask], qr_g[q_mask]
-    vt_q, vr_q = _filt_vel(qr_v)
+    qth_v = np.arctan2(qy_v, qx_v)
+    vr_q, _, vt_q, _ = _filtration_velocity_transient(qr_v, qth_v, np.full_like(qr_v, z_mid), t_s, vf, w_vis)
     cos_t = qx_v / qr_v
     sin_t = qy_v / qr_v
     vx_q = vr_q * cos_t - vt_q * sin_t
     vy_q = vr_q * sin_t + vt_q * cos_t
 
-    ref_m = float(np.nanmax(vmag_g)) if np.any(np.isfinite(vmag_g)) else 1.0
-    arrow_x, arrow_y = _quiver_2d_coords(qx_v, qy_v, vx_q, vy_q, max_len=r_vessel * 0.13, ref_mag=ref_m)
+    arrow_x, arrow_y = _quiver_2d_coords(qx_v, qy_v, vx_q, vy_q, max_len=r_vessel * 0.13, ref_mag=vmax_ref)
     fig_xy.add_trace(
         go.Scatter(
             x=arrow_x, y=arrow_y, mode="lines",
@@ -805,16 +1125,16 @@ def build_filtration_vector_figures(sim: Dict[str, Any]) -> Tuple[go.Figure, go.
         )
     )
     fig_xy.update_layout(
-        template="plotly_white", height=400, margin=dict(l=10, r=10, t=40, b=15),
-        title="Corte horizontal 2D: Vórtice + Succión radial",
+        template="plotly_white", height=480, margin=dict(l=10, r=10, t=40, b=15),
+        title=f"Corte horizontal 2D (t = {t_s:.1f} s): Vórtice + Succión radial",
         xaxis=dict(title="X (mm)", range=[-r_vessel * 1.06, r_vessel * 1.06]),
         yaxis=dict(title="Y (mm)", range=[-r_vessel * 1.06, r_vessel * 1.06], scaleanchor="x", scaleratio=1),
-        legend=dict(orientation="h", y=-0.22),
+        legend=dict(orientation="h", y=-0.18),
     )
 
-    # 2. Perfiles radiales v_theta(r) y |v_r(r)|
+    # 2. Perfiles radiales v_theta(r) y |v_r(r)| en t = t_s
     r_prof = np.linspace(1.0, r_vessel, 120)
-    vt_p, vr_p = _filt_vel(r_prof)
+    vr_p, _, vt_p, _ = _filtration_velocity_transient(r_prof, np.zeros_like(r_prof), np.full_like(r_prof, z_mid), t_s, vf, w_vis)
     fig_prof = go.Figure()
     fig_prof.add_trace(
         go.Scatter(x=r_prof, y=vt_p, mode="lines", name="Velocidad tangencial v_θ (m/s)",
@@ -827,12 +1147,177 @@ def build_filtration_vector_figures(sim: Dict[str, Any]) -> Tuple[go.Figure, go.
     fig_prof.add_vline(x=r_mesh, line=dict(color=PASTEL["mesh_dark"], width=2, dash="dot"),
                        annotation_text="Malla rotatoria (R_m)")
     fig_prof.update_layout(
-        template="plotly_white", height=400, margin=dict(l=10, r=10, t=40, b=15),
-        title="Perfiles radiales de velocidad",
+        template="plotly_white", height=320, margin=dict(l=10, r=10, t=35, b=10),
+        title=f"Perfiles radiales de velocidad (t = {t_s:.1f} s)",
         xaxis_title="Radio r (mm)", yaxis_title="Velocidad (m/s)",
-        legend=dict(orientation="h", y=-0.22),
+        legend=dict(orientation="h", y=-0.28),
     )
     return fig_xy, fig_prof
+
+
+@st.cache_data(show_spinner=False)
+def generate_filtration_snapshot_png(
+    sim: Dict[str, Any],
+    params: Dict[str, Any],
+    vec_anim: Dict[str, Any],
+    frame_idx: int,
+) -> bytes:
+    """Genera la ficha técnica PNG en alta resolución (3D + 2D + parámetros + ecuación vectorial)."""
+    k_idx = int(np.clip(frame_idx, 0, len(vec_anim["t"]) - 1))
+    t_k = float(vec_anim["t"][k_idx])
+    f_arr_k = float(vec_anim["f_arr"][k_idx])
+    vf = sim["vel_field"]
+    kpis = sim["kpis"]
+    r_mesh, r_vessel, h_mm = vf["r_mesh_mm"], vf["r_vessel_mm"], vf["height_mm"]
+    vmax_3d = vec_anim["vmax_global"]
+
+    pastel_cmap = LinearSegmentedColormap.from_list(
+        "pastel_vel_3d", ["#74c0fc", "#63e6be", "#ffe066", "#ff6b6b"]
+    )
+    pastel_cmap_2d = LinearSegmentedColormap.from_list(
+        "pastel_vel_2d", ["#e7f5ff", "#74c0fc", "#63e6be", "#ffe066", "#ff6b6b"]
+    )
+
+    fig = plt.figure(figsize=(14.5, 9.6), dpi=150, facecolor="#fcfcfd")
+    try:
+        gs = GridSpec(3, 2, figure=fig, height_ratios=[0.11, 0.56, 0.33], hspace=0.28, wspace=0.18)
+
+        # Banda superior
+        ax_head = fig.add_subplot(gs[0, :])
+        ax_head.axis("off")
+        ax_head.add_patch(
+            plt.Rectangle((0.0, 0.05), 1.0, 0.90, facecolor="#edf2ff", edgecolor="#bac8ff", linewidth=1.5, transform=ax_head.transAxes)
+        )
+        ax_head.text(
+            0.02, 0.64,
+            "REPORTE INSTANTÁNEO — CAMPO VECTORIAL DE VELOCIDADES (FILTRACIÓN ROTATORIA)",
+            fontsize=13, fontweight="bold", color="#1e293b", va="center", transform=ax_head.transAxes,
+        )
+        ax_head.text(
+            0.02, 0.25,
+            f"Línea: {params['cell_line']}  |  Malla: {params['mesh_material']}  |  "
+            f"Filtro: {params['rpm']} RPM  |  Perfusión: {params['perfusion_vvd']:.1f} VVD  |  Instante: t = {t_k:.1f} s / 10.0 s",
+            fontsize=9.6, color="#334155", va="center", transform=ax_head.transAxes,
+        )
+
+        # Panel 3D
+        ax3d = fig.add_subplot(gs[1, 0], projection="3d", facecolor="#f8fafc")
+        th_c = np.linspace(0, 2 * np.pi, 40)
+        z_c = np.linspace(0, h_mm, 12)
+        thm, zm = np.meshgrid(th_c, z_c)
+        ax3d.plot_surface(r_mesh * np.cos(thm), r_mesh * np.sin(thm), zm, color="#74c0fc", alpha=0.22, edgecolor="none")
+        ax3d.plot_wireframe(r_vessel * np.cos(thm), r_vessel * np.sin(thm), zm, color="#cbd5e1", alpha=0.35, rstride=3, cstride=4, linewidth=0.6)
+        a_m = float(vec_anim["angle_mesh"][k_idx])
+        for aa in (a_m, a_m + np.pi):
+            ax3d.plot([r_mesh * np.cos(aa), r_mesh * np.cos(aa)], [r_mesh * np.sin(aa), r_mesh * np.sin(aa)], [0, h_mm], color="#f06595", linewidth=2.5)
+
+        xk, yk, zk = vec_anim["x"][k_idx], vec_anim["y"][k_idx], vec_anim["z"][k_idx]
+        ux, uy, uz = vec_anim["vx"][k_idx], vec_anim["vy"][k_idx], vec_anim["vz"][k_idx]
+        spdk = vec_anim["speed"][k_idx]
+        scale_3d = (0.22 * r_vessel) / max(vmax_3d, 1e-6)
+        n_bins = 8
+        edges = np.linspace(0.0, vmax_3d + 1e-9, n_bins + 1)
+        for b in range(n_bins):
+            m = (spdk >= edges[b]) & (spdk <= edges[b + 1])
+            if np.any(m):
+                c_val = pastel_cmap((b + 0.5) / n_bins)
+                ax3d.quiver(
+                    xk[m], yk[m], zk[m], ux[m] * scale_3d, uy[m] * scale_3d, uz[m] * scale_3d,
+                    color=c_val, arrow_length_ratio=0.32, linewidth=1.2, normalize=False,
+                )
+        ax3d.set_xlim(-r_vessel * 1.05, r_vessel * 1.05)
+        ax3d.set_ylim(-r_vessel * 1.05, r_vessel * 1.05)
+        ax3d.set_zlim(0, h_mm)
+        ax3d.set_xlabel("X (mm)", fontsize=8.5)
+        ax3d.set_ylabel("Y (mm)", fontsize=8.5)
+        ax3d.set_zlabel("Z (mm)", fontsize=8.5)
+        ax3d.set_title(f"Campo Vectorial 3D — t = {t_k:.1f} s", fontsize=11, fontweight="bold", color="#1e293b", pad=8)
+        sm3d = ScalarMappable(norm=Normalize(0.0, vmax_3d), cmap=pastel_cmap)
+        sm3d.set_array([])
+        cb3d = fig.colorbar(sm3d, ax=ax3d, shrink=0.68, pad=0.14)
+        cb3d.set_label("|v| (m/s)", fontsize=8.5)
+
+        # Panel 2D
+        ax2d = fig.add_subplot(gs[1, 1], facecolor="#f8fafc")
+        z_mid = h_mm * 0.5
+        g2 = np.linspace(-r_vessel, r_vessel, 81)
+        gx, gy = np.meshgrid(g2, g2)
+        gr = np.hypot(gx, gy)
+        gth = np.arctan2(gy, gx)
+        vr_g, vz_g, vt_g, _ = _filtration_velocity_transient(gr, gth, np.full_like(gr, z_mid), t_k, vf, sim["w_vis"])
+        vmag_g = np.where(gr <= r_vessel, np.sqrt(vt_g**2 + vr_g**2 + vz_g**2), np.nan)
+        vr_r, vz_r, vt_r, _ = _filtration_velocity_transient(gr, gth, np.full_like(gr, z_mid), ANIM_SECONDS, vf, sim["w_vis"])
+        vmax_2d = float(np.nanmax(np.where(gr <= r_vessel, np.sqrt(vt_r**2 + vr_r**2 + vz_r**2), np.nan))) or 1.0
+
+        im = ax2d.imshow(
+            vmag_g, extent=[-r_vessel, r_vessel, -r_vessel, r_vessel],
+            origin="lower", cmap=pastel_cmap_2d, vmin=0.0, vmax=vmax_2d * 1.05,
+        )
+        qp = np.linspace(-r_vessel * 0.90, r_vessel * 0.90, 14)
+        qx, qy = np.meshgrid(qp, qp)
+        qr = np.hypot(qx, qy)
+        qm = (qr >= 6.0) & (qr <= r_vessel * 0.93)
+        vr_q, _, vt_q, _ = _filtration_velocity_transient(qr[qm], np.arctan2(qy[qm], qx[qm]), np.full_like(qr[qm], z_mid), t_k, vf, sim["w_vis"])
+        cos_t = qx[qm] / qr[qm]
+        sin_t = qy[qm] / qr[qm]
+        ax2d.quiver(
+            qx[qm], qy[qm], vr_q * cos_t - vt_q * sin_t, vr_q * sin_t + vt_q * cos_t,
+            color="#1e293b", scale=vmax_2d * 10.5, width=0.004,
+        )
+        th_ring = np.linspace(0, 2 * np.pi, 120)
+        ax2d.plot(r_mesh * np.cos(th_ring), r_mesh * np.sin(th_ring), color="#4dabf7", linewidth=2.2, label="Malla")
+        ax2d.plot(r_vessel * np.cos(th_ring), r_vessel * np.sin(th_ring), color="#64748b", linewidth=1.6, label="Tanque")
+        ax2d.set_aspect("equal")
+        ax2d.set_xlim(-r_vessel * 1.06, r_vessel * 1.06)
+        ax2d.set_ylim(-r_vessel * 1.06, r_vessel * 1.06)
+        ax2d.set_xlabel("X (mm)", fontsize=8.5)
+        ax2d.set_ylabel("Y (mm)", fontsize=8.5)
+        ax2d.set_title(f"Corte Horizontal 2D — t = {t_k:.1f} s", fontsize=11, fontweight="bold", color="#1e293b", pad=8)
+        cb2d = fig.colorbar(im, ax=ax2d, shrink=0.78, pad=0.04)
+        cb2d.set_label("|v| (m/s)", fontsize=8.5)
+
+        # Tarjeta inferior izquierda: Parámetros y KPIs
+        ax_p = fig.add_subplot(gs[2, 0])
+        ax_p.axis("off")
+        ax_p.add_patch(
+            plt.Rectangle((0.0, 0.0), 1.0, 1.0, facecolor="#f8fafc", edgecolor="#cbd5e1", linewidth=1.2, transform=ax_p.transAxes)
+        )
+        ax_p.text(0.03, 0.88, "PARÁMETROS DE CONFIGURACIÓN Y RESULTADOS", fontsize=10, fontweight="bold", color="#1e293b", transform=ax_p.transAxes)
+        param_lines = [
+            f"• Línea celular: {params['cell_line']}",
+            f"• Material malla: {params['mesh_material']}",
+            f"• Velocidad filtro: {params['rpm']} RPM   |   Poro / Célula: {params['pore_size_um']:.1f} / {params['cell_diameter_um']:.1f} µm",
+            f"• Perfusión: {params['perfusion_vvd']:.1f} VVD   |   Retrolavado: {'Sí' if params['backflush'] else 'No'}",
+            f"• Retención: {kpis['retention_efficiency']:.1f}%   |   Fouling: {kpis['fouling_index']:.0f}%   |   Corte τ_max: {kpis['shear_stress_pa']:.2f} Pa",
+            f"• Re rotacional: {kpis['re_rot']:,.0f}   |   |v| máx en t={t_k:.1f} s: {float(np.max(spdk)):.3f} m/s",
+        ]
+        ax_p.text(0.03, 0.77, "\n".join(param_lines), fontsize=8.8, color="#334155", va="top", linespacing=1.48, transform=ax_p.transAxes)
+
+        # Tarjeta inferior derecha: Ecuación Vectorial
+        ax_eq = fig.add_subplot(gs[2, 1])
+        ax_eq.axis("off")
+        ax_eq.add_patch(
+            plt.Rectangle((0.0, 0.0), 1.0, 1.0, facecolor="#f8fafc", edgecolor="#748ffc", linewidth=1.4, transform=ax_eq.transAxes)
+        )
+        ax_eq.text(0.03, 0.88, "ECUACIÓN VECTORIAL DEL CAMPO DE VELOCIDADES", fontsize=10, fontweight="bold", color="#1e293b", transform=ax_eq.transAxes)
+        eq_lines = [
+            r"$\mathbf{v}(r,\theta,z,t) = v_r\,\hat{e}_r + v_\theta\,\hat{e}_\theta + v_z\,\hat{e}_z$",
+            r"$v_x = v_r\cos\theta - v_\theta\sin\theta,\quad v_y = v_r\sin\theta + v_\theta\cos\theta$",
+            r"$v_\theta = f(t)\,g(\theta,t)\,\omega R_m (R_m/r)^{1.5}\ (r \geq R_m),\quad v_r = -f(t)\,v_{\mathrm{suc}}\sqrt{R_m/r}$",
+            r"$f(t) = 0.25 + 0.75(1 - e^{-t/1.8}) = %.3f$" % (f_arr_k,),
+            r"$\omega = %.2f\ \mathrm{rad/s},\quad R_m = %.0f\ \mathrm{mm},\quad v_{\mathrm{suc}} = %.4f\ \mathrm{m/s}$"
+            % (vf["omega"], r_mesh, vf["v_suc_ms"]),
+        ]
+        y_pos = 0.76
+        for line in eq_lines:
+            ax_eq.text(0.03, y_pos, line, fontsize=8.2, color="#1e293b", va="top", transform=ax_eq.transAxes)
+            y_pos -= 0.15
+
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
+        return buf.getvalue()
+    finally:
+        plt.close(fig)
 
 
 def filtration_report(p: Dict[str, Any], sim: Dict[str, Any]) -> str:
@@ -945,13 +1430,67 @@ def render_filtration_tab() -> None:
         st.divider()
         st.subheader("🧭 Campo Vectorial Fluidodinámico alrededor de la Malla")
         st.caption(
-            "Visualización del vórtice rotatorio de Taylor-Couette ($v_\\theta$) acoplado "
-            "con la succión radial de permeado ($v_r$)."
+            "Simulación animada 3D (10 s) de las flechas de velocidad del vórtice de Taylor-Couette ($v_\\theta$) "
+            "acoplado con la succión radial ($v_r$) y el corte horizontal 2D."
         )
-        fv1, fv2 = st.columns([1.15, 1], gap="medium")
-        fig_fxy, fig_fprof = build_filtration_vector_figures(sim)
-        fv1.plotly_chart(fig_fxy, width="stretch", key="filt_vec_xy", config={"displaylogo": False})
-        fv2.plotly_chart(fig_fprof, width="stretch", key="filt_vec_prof", config={"displaylogo": False})
+        st.session_state.setdefault("filt_vec_paused", False)
+        filt_vec_anim = run_filtration_vector_animation(sim["vel_field"], sim["w_vis"])
+
+        if not st.session_state["filt_vec_paused"]:
+            if st.button("⏸ Pausar en un segundo y Descargar Imagen (.png)", key="btn_filt_pause", type="secondary"):
+                st.session_state["filt_vec_paused"] = True
+                st.rerun()
+            fv1, fv2 = st.columns([1.05, 1], gap="medium")
+            fv1.plotly_chart(
+                build_filtration_vector_3d_figure(sim, filt_vec_anim, paused_frame=None),
+                width="stretch", key="filt_vec_3d", config={"displaylogo": False},
+            )
+            fig_fxy, fig_fprof = build_filtration_vector_figures(sim, t_s=ANIM_SECONDS)
+            fv2.plotly_chart(fig_fxy, width="stretch", key="filt_vec_xy", config={"displaylogo": False})
+            st.plotly_chart(fig_fprof, width="stretch", key="filt_vec_prof", config={"displaylogo": False})
+        else:
+            pbar1, pbar2 = st.columns([1, 2.2])
+            with pbar1:
+                if st.button("▶ Reanudar Simulación 3D (10 s)", key="btn_filt_resume", type="primary"):
+                    st.session_state["filt_vec_paused"] = False
+                    st.rerun()
+            with pbar2:
+                filt_t = st.slider(
+                    "Instante pausado t (s)",
+                    min_value=0.0,
+                    max_value=float(ANIM_SECONDS),
+                    value=4.0,
+                    step=0.2,
+                    key="filt_pause_t",
+                )
+            f_idx = int(np.clip(round(filt_t / (ANIM_SECONDS / N_FRAMES)), 0, N_FRAMES))
+            fv1, fv2 = st.columns([1.05, 1], gap="medium")
+            fv1.plotly_chart(
+                build_filtration_vector_3d_figure(sim, filt_vec_anim, paused_frame=f_idx),
+                width="stretch", key="filt_vec_3d", config={"displaylogo": False},
+            )
+            fig_fxy, fig_fprof = build_filtration_vector_figures(sim, t_s=filt_t)
+            fv2.plotly_chart(fig_fxy, width="stretch", key="filt_vec_xy", config={"displaylogo": False})
+            st.plotly_chart(fig_fprof, width="stretch", key="filt_vec_prof", config={"displaylogo": False})
+
+            st.markdown("**Ecuación Vectorial en el instante pausado:**")
+            st.latex(
+                r"\mathbf{v}(r,\theta,z,t) = v_r\,\hat{e}_r + v_\theta\,\hat{e}_\theta + v_z\,\hat{e}_z,\qquad "
+                r"v_\theta(r,t) = f(t)\,g(\theta,t)\,\omega R_m\left(\frac{R_m}{r}\right)^{1.5},\quad "
+                r"v_r(r,t) = -f(t)\,v_{\mathrm{suc}}\sqrt{\frac{R_m}{r}}"
+            )
+            filt_png = generate_filtration_snapshot_png(sim, p, filt_vec_anim, f_idx)
+            st.download_button(
+                label=f"📥 Descargar Imagen de Velocidades en Malla (.png) — t = {filt_t:.1f} s",
+                data=filt_png,
+                file_name=f"campo_velocidades_filtracion_{p['rpm']}rpm_t{filt_t:.1f}s.png",
+                mime="image/png",
+                type="primary",
+                width="stretch",
+                key="dl_filt_vec_png",
+            )
+            with st.expander("👁️ Vista previa de la imagen PNG descargable"):
+                st.image(filt_png, width="stretch")
 
 
 # =====================================================================
@@ -1088,7 +1627,7 @@ def build_thermal_figure(sim: Dict[str, Any], params: Dict[str, Any]) -> go.Figu
                  traces=[0, 1], name=str(k))
         for k, Tk in enumerate(sim["frames"])
     ]
-    scene = _light_scene([-R * 1.2, R * 1.2], [-R * 1.2, R * 1.2], [0, H], z_title="z (cm)")
+    scene = _light_scene([-R * 1.2, R * 1.2], [-R * 1.2, R * 1.2], [0, H], z_title="z (cm)", xy_unit="cm")
     scene["aspectmode"] = "data"
     scene["camera"] = dict(eye=dict(x=2.0, y=1.1, z=0.8))
     fig.update_layout(
@@ -1212,6 +1751,108 @@ def _fluid_velocity(r: np.ndarray, z: np.ndarray, pr: Dict[str, float]):
     return vr, vz, vt
 
 
+def _fluid_velocity_transient(
+    r: np.ndarray | float,
+    theta: np.ndarray | float,
+    z: np.ndarray | float,
+    t_s: float,
+    pr: Dict[str, float],
+    blades: int,
+    w_vis: float,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, float]:
+    """Campo de velocidades transitorio con rampa de arranque e interacción por paso de palas."""
+    r_arr = np.asarray(r, dtype=float)
+    th_arr = np.asarray(theta, dtype=float)
+    z_arr = np.asarray(z, dtype=float)
+
+    vr0, vz0, vt0 = _fluid_velocity(r_arr, z_arr, pr)
+    f_arr = float(0.25 + 0.75 * (1.0 - np.exp(-float(t_s) / 1.8)))
+    amp_b = 0.06 if blades == 0 else 0.15
+    nb = max(int(blades), 2)
+    g_wake = 1.0 + amp_b * np.exp(-((z_arr - pr["zi"]) / (0.28 * pr["H"])) ** 2) * np.cos(nb * (th_arr - w_vis * t_s))
+    factor = f_arr * g_wake
+    return vr0 * factor, vz0 * factor, vt0 * factor, f_arr
+
+
+@st.cache_data(show_spinner=False)
+def run_fluid_vector_animation(
+    pr: Dict[str, float],
+    kind: str,
+    blades: int,
+    rpm: float,
+    density: str = "Media",
+    duration_s: float = ANIM_SECONDS,
+    n_frames: int = N_FRAMES,
+) -> Dict[str, Any]:
+    """Integra trayectorias de flechas 3D del campo vectorial durante 10 s (t = 0 -> 10 s)."""
+    res_map = {"Baja": (3, 6, 4), "Media": (4, 8, 4), "Alta": (4, 10, 5)}
+    nr, nth, nz = res_map.get(density, (4, 8, 4))
+
+    R_m, H_m = pr["R"], pr["H"]
+    rg, thg, zg = np.meshgrid(
+        np.linspace(0.18 * R_m, 0.90 * R_m, nr),
+        np.linspace(0.0, 2.0 * np.pi, nth, endpoint=False),
+        np.linspace(0.10 * H_m, 0.90 * H_m, nz),
+        indexing="ij",
+    )
+    r_cur = rg.ravel().copy()
+    th_cur = thg.ravel().copy()
+    z_cur = zg.ravel().copy()
+
+    rpm_vis = 0.05 + 0.30 * min(rpm, 400) / 400.0
+    w_vis = 2.0 * np.pi * rpm_vis
+
+    sub = 3
+    dt_anim = duration_s / (n_frames * sub)
+    dt_adv = (2.0 / duration_s) * dt_anim
+
+    xs, ys, zs, vxs, vys, vzs, spds, f_arrs, angs = [], [], [], [], [], [], [], [], []
+    t_grid = np.linspace(0.0, duration_s, n_frames + 1)
+
+    for k in range(n_frames + 1):
+        t_k = float(t_grid[k])
+        vr, vz, vt, f_arr = _fluid_velocity_transient(r_cur, th_cur, z_cur, t_k, pr, blades, w_vis)
+        xs.append(r_cur * np.cos(th_cur) * 100.0)
+        ys.append(r_cur * np.sin(th_cur) * 100.0)
+        zs.append(z_cur * 100.0)
+        vxs.append(vr * np.cos(th_cur) - vt * np.sin(th_cur))
+        vys.append(vr * np.sin(th_cur) + vt * np.cos(th_cur))
+        vzs.append(vz)
+        spds.append(np.sqrt(vr**2 + vz**2 + vt**2))
+        f_arrs.append(f_arr)
+        angs.append(float(w_vis * t_k))
+
+        if k == n_frames:
+            break
+        for s_idx in range(sub):
+            t_sub = t_k + s_idx * dt_anim
+            vr1, vz1, vt1, _ = _fluid_velocity_transient(r_cur, th_cur, z_cur, t_sub, pr, blades, w_vis)
+            rm = np.clip(r_cur + 0.5 * dt_adv * vr1, 0.04 * R_m, 0.96 * R_m)
+            thm = th_cur + 0.5 * dt_adv * vt1 / np.maximum(r_cur, 0.004)
+            zm = np.clip(z_cur + 0.5 * dt_adv * vz1, 0.03 * H_m, 0.97 * H_m)
+
+            vr2, vz2, vt2, _ = _fluid_velocity_transient(rm, thm, zm, t_sub + 0.5 * dt_anim, pr, blades, w_vis)
+            th_cur = (th_cur + dt_adv * vt2 / np.maximum(rm, 0.004)) % (2.0 * np.pi)
+            r_cur = np.clip(r_cur + dt_adv * vr2, 0.04 * R_m, 0.96 * R_m)
+            z_cur = np.clip(z_cur + dt_adv * vz2, 0.03 * H_m, 0.97 * H_m)
+
+    spd_arr = np.array(spds)
+    return {
+        "x": np.array(xs),
+        "y": np.array(ys),
+        "z": np.array(zs),
+        "vx": np.array(vxs),
+        "vy": np.array(vys),
+        "vz": np.array(vzs),
+        "speed": spd_arr,
+        "t": t_grid,
+        "f_arr": np.array(f_arrs),
+        "angle_imp": np.array(angs),
+        "w_vis": float(w_vis),
+        "vmax_global": float(np.max(spd_arr)) or 1.0,
+    }
+
+
 def _impeller_lines(kind: str, n_blades: int, d: float, zi: float, angle: float):
     xs, ys, zs = [], [], []
 
@@ -1243,6 +1884,75 @@ def _impeller_lines(kind: str, n_blades: int, d: float, zi: float, angle: float)
             add([(0.08 * d, a, zi), (0.5 * d, a - 0.18, zi - 0.09 * d), (0.5 * d, a + 0.18, zi + 0.09 * d),
                  (0.08 * d, a, zi)])
     return xs, ys, zs
+
+
+def _compute_vortex_traces(
+    pr: Dict[str, float],
+    n_steps: int = 120,
+    t_trace: float = 4.5,
+) -> Dict[str, np.ndarray]:
+    """Integra 14 líneas de corriente 3D (trazas de vórtices) mediante RK2."""
+    R, H, zi = pr["R"], pr["H"], pr["zi"]
+    if pr["double"]:
+        # 7 semillas en vórtice superior + 7 en vórtice inferior
+        r_s = np.array([
+            0.35, 0.55, 0.78, 0.45, 0.70, 0.60, 0.85,
+            0.35, 0.55, 0.78, 0.45, 0.70, 0.60, 0.85,
+        ]) * R
+        z_s = np.array([
+            0.55, 0.65, 0.75, 0.82, 0.58, 0.70, 0.84,
+            0.10, 0.16, 0.22, 0.26, 0.14, 0.20, 0.28,
+        ]) * H
+    else:
+        r_s = np.array([0.30, 0.48, 0.68, 0.84, 0.36, 0.58, 0.78, 0.42, 0.64, 0.82, 0.28, 0.52, 0.72, 0.88]) * R
+        z_s = np.array([0.18, 0.28, 0.42, 0.55, 0.68, 0.80, 0.88, 0.35, 0.52, 0.72, 0.76, 0.60, 0.22, 0.46]) * H
+
+    th_s = np.linspace(0.0, 2.0 * np.pi, len(r_s), endpoint=False)
+    r = r_s.copy()
+    z = z_s.copy()
+    th = th_s.copy()
+
+    n_tr = len(r)
+    dt = t_trace / n_steps
+    xs = np.zeros((n_tr, n_steps + 1))
+    ys = np.zeros((n_tr, n_steps + 1))
+    zs = np.zeros((n_tr, n_steps + 1))
+    rs = np.zeros((n_tr, n_steps + 1))
+    vxs = np.zeros((n_tr, n_steps + 1))
+    vys = np.zeros((n_tr, n_steps + 1))
+    vzs = np.zeros((n_tr, n_steps + 1))
+    spds = np.zeros((n_tr, n_steps + 1))
+
+    for k in range(n_steps + 1):
+        vr, vz, vt = _fluid_velocity(r, z, pr)
+        xs[:, k] = r * np.cos(th) * 100.0
+        ys[:, k] = r * np.sin(th) * 100.0
+        zs[:, k] = z * 100.0
+        rs[:, k] = r * 100.0
+        vxs[:, k] = vr * np.cos(th) - vt * np.sin(th)
+        vys[:, k] = vr * np.sin(th) + vt * np.cos(th)
+        vzs[:, k] = vz
+        spds[:, k] = np.sqrt(vr**2 + vz**2 + vt**2)
+        if k == n_steps:
+            break
+        rm = np.clip(r + 0.5 * dt * vr, 0.002, 0.985 * R)
+        zm = np.clip(z + 0.5 * dt * vz, 0.02 * H, 0.98 * H)
+        vr2, vz2, vt2 = _fluid_velocity(rm, zm, pr)
+        th = th + dt * vt2 / np.maximum(rm, 0.004)
+        r = np.clip(r + dt * vr2, 0.002, 0.985 * R)
+        z = np.clip(z + dt * vz2, 0.02 * H, 0.98 * H)
+
+    return {
+        "t_s": np.linspace(0.0, t_trace, n_steps + 1),
+        "x_cm": xs,
+        "y_cm": ys,
+        "z_cm": zs,
+        "r_cm": rs,
+        "vx": vxs,
+        "vy": vys,
+        "vz": vzs,
+        "speed": spds,
+    }
 
 
 @st.cache_data(show_spinner=False)
@@ -1306,12 +2016,14 @@ def run_fluid_solver(
 
     re_grid = np.logspace(0, 6, 120)
     curves = {n: c["np_t"] + c["kp"] / re_grid for n, c in IMPELLERS.items()}
+    vortex_traces = _compute_vortex_traces(pr)
     return {
         "x": np.array(px), "y": np.array(py), "z": np.array(pz),
         "vx": np.array(vx_a), "vy": np.array(vy_a), "vz": np.array(vz_a),
         "speed": np.array(spd), "t_phys": np.linspace(0, t_phys, n_frames + 1),
         "cfg": cfg, "geom": dict(T=T, D=D, H=H, zi=H / 3),
         "vel_params": pr,
+        "vortex_traces": vortex_traces,
         "re_grid": re_grid, "np_curves": curves,
         "kpis": dict(re=float(re), regime=regime, np=float(npw), power_w=float(power), p_over_v=float(power / vol),
                      u_tip=float(u_tip), shear=float(gamma), eps=float(eps), eta_um=float(eta * 1e6),
@@ -1320,7 +2032,12 @@ def run_fluid_solver(
     }
 
 
-def build_fluid_figure(sim: Dict[str, Any], params: Dict[str, Any], show_vectors: bool = True) -> go.Figure:
+def build_fluid_figure(
+    sim: Dict[str, Any],
+    params: Dict[str, Any],
+    show_vectors: bool = False,
+    show_vortex_traces: bool = True,
+) -> go.Figure:
     g = sim["geom"]
     Rc, Hc, zi, d = g["T"] * 50, g["H"] * 100, g["zi"] * 100, g["D"] * 100
     cfg = sim["cfg"]
@@ -1351,8 +2068,30 @@ def build_fluid_figure(sim: Dict[str, Any], params: Dict[str, Any], show_vectors
                         colorbar=dict(title="|v| (m/s)", thickness=15, len=0.7)),
             hovertemplate="|v| = %{marker.color:.2f} m/s<extra></extra>")
 
-    fig.add_trace(imp(0))
-    fig.add_trace(tracers(0))
+    fig.add_trace(imp(0))      # 2
+    fig.add_trace(tracers(0))  # 3
+
+    if show_vortex_traces:
+        vt_data = sim["vortex_traces"]
+        n_tr, n_pts = vt_data["x_cm"].shape
+        vx_l = np.empty((n_tr, n_pts + 1), dtype=object)
+        vy_l = np.empty((n_tr, n_pts + 1), dtype=object)
+        vz_l = np.empty((n_tr, n_pts + 1), dtype=object)
+        vc_l = np.empty((n_tr, n_pts + 1), dtype=float)
+        vx_l[:, :-1], vx_l[:, -1] = vt_data["x_cm"], None
+        vy_l[:, :-1], vy_l[:, -1] = vt_data["y_cm"], None
+        vz_l[:, :-1], vz_l[:, -1] = vt_data["z_cm"], None
+        vc_l[:, :-1], vc_l[:, -1] = vt_data["speed"], 0.0
+        fig.add_trace(go.Scatter3d(
+            x=vx_l.ravel().tolist(),
+            y=vy_l.ravel().tolist(),
+            z=vz_l.ravel().tolist(),
+            mode="lines",
+            line=dict(color=vc_l.ravel().tolist(), colorscale=pastel_vel, cmin=0.0, cmax=vmax, width=3.5),
+            opacity=0.78,
+            name="Trazas de vórtices",
+            hoverinfo="skip",
+        ))
 
     if show_vectors:
         pr = sim["vel_params"]
@@ -1365,19 +2104,27 @@ def build_fluid_figure(sim: Dict[str, Any], params: Dict[str, Any], show_vectors
         )
         vr_g, vz_g, vt_g = _fluid_velocity(rg.ravel(), zg.ravel(), pr)
         th_flat = thg.ravel()
-        fig.add_trace(go.Cone(
-            x=rg.ravel() * np.cos(th_flat) * 100.0,
-            y=rg.ravel() * np.sin(th_flat) * 100.0,
-            z=zg.ravel() * 100.0,
-            u=vr_g * np.cos(th_flat) - vt_g * np.sin(th_flat),
-            v=vr_g * np.sin(th_flat) + vt_g * np.cos(th_flat),
-            w=vz_g,
-            colorscale=[[0, "#748ffc"], [1, "#f06595"]], sizemode="scaled", sizeref=1.6,
-            anchor="tail", showscale=False, opacity=0.72, name="Vectores de flujo", hoverinfo="skip",
-        ))
+        shaft_tr, head_tr = _build_3d_arrow_traces(
+            rg.ravel() * np.cos(th_flat) * 100.0,
+            rg.ravel() * np.sin(th_flat) * 100.0,
+            zg.ravel() * 100.0,
+            vr_g * np.cos(th_flat) - vt_g * np.sin(th_flat),
+            vr_g * np.sin(th_flat) + vt_g * np.cos(th_flat),
+            vz_g,
+            max_arrow_len=0.22 * Rc,
+            vmax=vmax,
+            colorscale=pastel_vel,
+            show_colorbar=False,
+            name="Flechas de flujo",
+            line_width=3.0,
+            head_ratio=0.28,
+            opacity=0.82,
+        )
+        fig.add_trace(shaft_tr)
+        fig.add_trace(head_tr)
 
     frames = [go.Frame(data=[imp(k), tracers(k)], traces=[2, 3], name=str(k)) for k in range(len(times))]
-    scene = _light_scene([-Rc * 1.05, Rc * 1.05], [-Rc * 1.05, Rc * 1.05], [0, Hc], z_title="z (cm)")
+    scene = _light_scene([-Rc * 1.05, Rc * 1.05], [-Rc * 1.05, Rc * 1.05], [0, Hc], z_title="z (cm)", xy_unit="cm")
     scene["aspectmode"] = "data"
     scene["camera"] = dict(eye=dict(x=1.7, y=1.3, z=0.7))
     fig.update_layout(template="plotly_white", height=620, margin=dict(l=0, r=0, t=30, b=0), showlegend=False, scene=scene)
@@ -1398,31 +2145,17 @@ def build_np_re_figure(sim: Dict[str, Any], impeller: str) -> go.Figure:
     return fig
 
 
-def build_fluid_vector_3d_figure(sim: Dict[str, Any], params: Dict[str, Any], density: str = "Media") -> go.Figure:
-    """Construye el campo vectorial 3D Euleriano v(x, y, z) en rejilla cilíndrica ordenada."""
-    res_map = {"Baja": (3, 6, 4), "Media": (4, 8, 5), "Alta": (5, 10, 6)}
-    nr, nth, nz = res_map.get(density, (4, 8, 5))
-
-    pr = sim["vel_params"]
+def build_fluid_vector_3d_figure(
+    sim: Dict[str, Any],
+    params: Dict[str, Any],
+    vec_anim: Dict[str, Any],
+    paused_frame: int | None = None,
+) -> go.Figure:
+    """Construye la simulación animada 3D (10 s) o congelada de flechas de velocidad."""
     g = sim["geom"]
-    R_m, H_m = pr["R"], pr["H"]
     Rc, Hc, zi, d = g["T"] * 50, g["H"] * 100, g["zi"] * 100, g["D"] * 100
     cfg = sim["cfg"]
-
-    rg, thg, zg = np.meshgrid(
-        np.linspace(0.18 * R_m, 0.90 * R_m, nr),
-        np.linspace(0.0, 2.0 * np.pi, nth, endpoint=False),
-        np.linspace(0.10 * H_m, 0.90 * H_m, nz),
-        indexing="ij",
-    )
-    rf, thf, zf = rg.ravel(), thg.ravel(), zg.ravel()
-    vr, vz, vt = _fluid_velocity(rf, zf, pr)
-
-    xc = rf * np.cos(thf) * 100.0
-    yc = rf * np.sin(thf) * 100.0
-    zc = zf * 100.0
-    vx = vr * np.cos(thf) - vt * np.sin(thf)
-    vy = vr * np.sin(thf) + vt * np.cos(thf)
+    vmax = vec_anim["vmax_global"]
 
     pastel_vel = [[0.0, "#74c0fc"], [0.35, "#63e6be"], [0.7, "#ffe066"], [1.0, "#ff6b6b"]]
     th_s = np.linspace(0, 2 * np.pi, 45)
@@ -1438,29 +2171,53 @@ def build_fluid_vector_3d_figure(sim: Dict[str, Any], params: Dict[str, Any], de
         x=[0, 0], y=[0, 0], z=[Hc * 1.02, zi], mode="lines",
         line=dict(color="#94a3b8", width=5), name="Eje", hoverinfo="skip",
     ))
-    ix, iy, iz = _impeller_lines(cfg["kind"], cfg["blades"], d, zi, 0.0)
-    col_imp = PASTEL["mesh_dark"] if cfg["kind"] == "spin_only" else PASTEL["impeller"]
-    fig.add_trace(go.Scatter3d(
-        x=ix, y=iy, z=iz, mode="lines",
-        line=dict(color=col_imp, width=6), name="Impulsor / Filtro", hoverinfo="skip",
-    ))
-    fig.add_trace(go.Cone(
-        x=xc, y=yc, z=zc, u=vx, v=vy, w=vz,
-        colorscale=pastel_vel, sizemode="scaled", sizeref=1.7, anchor="tail",
-        colorbar=dict(title="|v| (m/s)", thickness=14, len=0.72),
-        hovertemplate=(
-            "x=%{x:.1f} cm · y=%{y:.1f} cm · z=%{z:.1f} cm<br>"
-            "vx=%{u:.3f} · vy=%{v:.3f} · vz=%{w:.3f} m/s<extra>Vector</extra>"
-        ),
-        name="Campo vectorial 3D",
-    ))
 
-    scene = _light_scene([-Rc * 1.05, Rc * 1.05], [-Rc * 1.05, Rc * 1.05], [0, Hc], z_title="z (cm)")
+    def imp_trace(k: int) -> go.Scatter3d:
+        ix, iy, iz = _impeller_lines(cfg["kind"], cfg["blades"], d, zi, float(vec_anim["angle_imp"][k]))
+        col_imp = PASTEL["mesh_dark"] if cfg["kind"] == "spin_only" else PASTEL["impeller"]
+        return go.Scatter3d(
+            x=ix, y=iy, z=iz, mode="lines",
+            line=dict(color=col_imp, width=6), name="Impulsor / Filtro", hoverinfo="skip",
+        )
+
+    def arrow_traces(k: int) -> Tuple[go.Scatter3d, go.Cone]:
+        return _build_3d_arrow_traces(
+            vec_anim["x"][k], vec_anim["y"][k], vec_anim["z"][k],
+            vec_anim["vx"][k], vec_anim["vy"][k], vec_anim["vz"][k],
+            max_arrow_len=0.28 * Rc,
+            vmax=vmax,
+            colorscale=pastel_vel,
+            show_colorbar=True,
+            name="Vectores 3D",
+            line_width=3.6,
+            head_ratio=0.30,
+        )
+
+    k0 = 0 if paused_frame is None else int(np.clip(paused_frame, 0, len(vec_anim["t"]) - 1))
+    s0, h0 = arrow_traces(k0)
+    fig.add_trace(imp_trace(k0))  # 2
+    fig.add_trace(s0)             # 3
+    fig.add_trace(h0)             # 4
+
+    scene = _light_scene([-Rc * 1.05, Rc * 1.05], [-Rc * 1.05, Rc * 1.05], [0, Hc], z_title="z (cm)", xy_unit="cm")
     scene["aspectmode"] = "data"
     scene["camera"] = dict(eye=dict(x=1.65, y=1.35, z=0.75))
+
+    if paused_frame is None:
+        frames = [
+            go.Frame(data=[imp_trace(k), *arrow_traces(k)], traces=[2, 3, 4], name=str(k))
+            for k in range(len(vec_anim["t"]))
+        ]
+        fig.update_layout(
+            template="plotly_white", height=520, margin=dict(l=0, r=0, t=40, b=0),
+            title="Simulación 3D de Vectores de Velocidad (10 s)", showlegend=False, scene=scene,
+        )
+        return add_animation_controls(fig, frames, [f"{t:.1f} s" for t in vec_anim["t"]], "Tiempo: ")
+
+    t_k = float(vec_anim["t"][k0])
     fig.update_layout(
-        template="plotly_white", height=460, margin=dict(l=0, r=0, t=40, b=0),
-        title="Campo Vectorial 3D Euleriano v(x, y, z)", showlegend=False, scene=scene,
+        template="plotly_white", height=520, margin=dict(l=0, r=0, t=40, b=0),
+        title=f"Vista 3D Pausada — t = {t_k:.1f} s", showlegend=False, scene=scene,
     )
     return fig
 
@@ -1470,13 +2227,18 @@ def build_fluid_vector_2d_figure(
     params: Dict[str, Any],
     plane: str = "Meridional (r–z)",
     z_slice_cm: float | None = None,
+    t_s: float = 10.0,
 ) -> go.Figure:
-    """Construye un mapa de calor + flechas quiver 2D en corte meridional (r-z) u horizontal (x-y)."""
+    """Construye un mapa de calor + flechas quiver 2D en corte meridional (r-z) u horizontal (x-y) en t = t_s."""
     pr = sim["vel_params"]
     g = sim["geom"]
     R_m, H_m = pr["R"], pr["H"]
     Rc, Hc, zi, d = g["T"] * 50, g["H"] * 100, g["zi"] * 100, g["D"] * 100
     cfg = sim["cfg"]
+    blades = cfg["blades"]
+    rpm_vis = 0.05 + 0.30 * min(params["rpm"], 400) / 400.0
+    w_vis = 2.0 * np.pi * rpm_vis
+    z_max_hm = sim["kpis"]["v_max_ms"] * 1.15
     pastel_vel = [[0.0, "#e7f5ff"], [0.3, "#74c0fc"], [0.55, "#63e6be"], [0.8, "#ffe066"], [1.0, "#ff6b6b"]]
 
     fig = go.Figure()
@@ -1484,10 +2246,12 @@ def build_fluid_vector_2d_figure(
         xg = np.linspace(-Rc, Rc, 61)
         zg = np.linspace(0.0, Hc, 45)
         xx, zz = np.meshgrid(xg, zg)
-        vr_h, vz_h, vt_h = _fluid_velocity(np.abs(xx) / 100.0, zz / 100.0, pr)
+        th_hm = np.where(xx >= 0.0, 0.0, np.pi)
+        vr_h, vz_h, vt_h, _ = _fluid_velocity_transient(np.abs(xx) / 100.0, th_hm, zz / 100.0, t_s, pr, blades, w_vis)
         vmag_h = np.sqrt(vr_h**2 + vz_h**2 + vt_h**2)
         fig.add_trace(go.Heatmap(
             x=xg, y=zg, z=vmag_h, colorscale=pastel_vel,
+            zmin=0.0, zmax=z_max_hm,
             colorbar=dict(title="|v| (m/s)", thickness=14, len=0.8),
             hovertemplate="x=%{x:.1f} cm · z=%{y:.1f} cm<br>|v|=%{z:.3f} m/s<extra></extra>",
         ))
@@ -1497,10 +2261,11 @@ def build_fluid_vector_2d_figure(
         qxx, qzz = np.meshgrid(qx, qz)
         q_mask = np.abs(qxx) >= 0.06 * Rc
         qxv, qzv = qxx[q_mask], qzz[q_mask]
-        vr_q, vz_q, vt_q = _fluid_velocity(np.abs(qxv) / 100.0, qzv / 100.0, pr)
+        th_q = np.where(qxv >= 0.0, 0.0, np.pi)
+        vr_q, vz_q, vt_q, _ = _fluid_velocity_transient(np.abs(qxv) / 100.0, th_q, qzv / 100.0, t_s, pr, blades, w_vis)
         u_q = vr_q * np.sign(qxv)
         v_q = vz_q
-        ref_rz = float(np.max(np.hypot(u_q, v_q))) if len(u_q) else 1.0
+        ref_rz = float(sim["kpis"]["v_circ_max_ms"]) or 1.0
         ax, ay = _quiver_2d_coords(qxv, qzv, u_q, v_q, max_len=Rc * 0.14, ref_mag=ref_rz)
         fig.add_trace(go.Scatter(
             x=ax, y=ay, mode="lines", line=dict(color="#1e293b", width=1.6),
@@ -1516,7 +2281,6 @@ def build_fluid_vector_2d_figure(
             ),
             showlegend=False,
         ))
-        # Contorno del tanque, eje y silueta del impulsor o filtro
         fig.add_trace(go.Scatter(
             x=[-Rc, Rc, Rc, -Rc, -Rc], y=[0, 0, Hc, Hc, 0], mode="lines",
             line=dict(color="#64748b", width=2), name="Tanque", hoverinfo="skip",
@@ -1539,8 +2303,8 @@ def build_fluid_vector_2d_figure(
             ))
 
         fig.update_layout(
-            template="plotly_white", height=460, margin=dict(l=10, r=10, t=40, b=15),
-            title="Corte 2D Meridional (r–z): Circulación axial-radial",
+            template="plotly_white", height=520, margin=dict(l=10, r=10, t=40, b=15),
+            title=f"Corte 2D Meridional (r–z) — t = {t_s:.1f} s",
             xaxis=dict(title="Posición radial x (cm)", range=[-Rc * 1.06, Rc * 1.06]),
             yaxis=dict(title="Altura z (cm)", range=[0, Hc], scaleanchor="x", scaleratio=1),
             showlegend=False,
@@ -1551,10 +2315,12 @@ def build_fluid_vector_2d_figure(
         grid = np.linspace(-Rc, Rc, 61)
         xx, yy = np.meshgrid(grid, grid)
         rr_m = np.hypot(xx, yy) / 100.0
-        vr_h, vz_h, vt_h = _fluid_velocity(rr_m, np.full_like(rr_m, z_m), pr)
+        th_hm = np.arctan2(yy, xx)
+        vr_h, vz_h, vt_h, _ = _fluid_velocity_transient(rr_m, th_hm, np.full_like(rr_m, z_m), t_s, pr, blades, w_vis)
         vmag_h = np.where(rr_m <= R_m, np.sqrt(vr_h**2 + vz_h**2 + vt_h**2), np.nan)
         fig.add_trace(go.Heatmap(
             x=grid, y=grid, z=vmag_h, colorscale=pastel_vel,
+            zmin=0.0, zmax=z_max_hm,
             colorbar=dict(title="|v| (m/s)", thickness=14, len=0.8),
             hovertemplate="x=%{x:.1f} cm · y=%{y:.1f} cm<br>|v|=%{z:.3f} m/s<extra></extra>",
         ))
@@ -1564,14 +2330,15 @@ def build_fluid_vector_2d_figure(
         qrr_m = np.hypot(qxx, qyy) / 100.0
         q_mask = (qrr_m >= 0.08 * R_m) & (qrr_m <= 0.94 * R_m)
         qxv, qyv, qrv = qxx[q_mask], qyy[q_mask], qrr_m[q_mask]
-        vr_q, vz_q, vt_q = _fluid_velocity(qrv, np.full_like(qrv, z_m), pr)
+        th_q = np.arctan2(qyv, qxv)
+        vr_q, vz_q, vt_q, _ = _fluid_velocity_transient(qrv, th_q, np.full_like(qrv, z_m), t_s, pr, blades, w_vis)
         r_safe = np.maximum(qrv * 100.0, 1e-6)
         cos_t = qxv / r_safe
         sin_t = qyv / r_safe
         vx_q = vr_q * cos_t - vt_q * sin_t
         vy_q = vr_q * sin_t + vt_q * cos_t
 
-        ref_xy = float(np.max(np.hypot(vx_q, vy_q))) if len(vx_q) else 1.0
+        ref_xy = float(sim["kpis"]["v_max_ms"]) or 1.0
         ax, ay = _quiver_2d_coords(qxv, qyv, vx_q, vy_q, max_len=Rc * 0.13, ref_mag=ref_xy)
         fig.add_trace(go.Scatter(
             x=ax, y=ay, mode="lines", line=dict(color="#1e293b", width=1.6),
@@ -1599,13 +2366,389 @@ def build_fluid_vector_2d_figure(
         ))
 
         fig.update_layout(
-            template="plotly_white", height=460, margin=dict(l=10, r=10, t=40, b=15),
-            title=f"Corte 2D Horizontal (x–y) a z = {z_cm:.1f} cm",
+            template="plotly_white", height=520, margin=dict(l=10, r=10, t=40, b=15),
+            title=f"Corte 2D Horizontal (x–y) a z = {z_cm:.1f} cm — t = {t_s:.1f} s",
             xaxis=dict(title="x (cm)", range=[-Rc * 1.06, Rc * 1.06]),
             yaxis=dict(title="y (cm)", range=[-Rc * 1.06, Rc * 1.06], scaleanchor="x", scaleratio=1),
             showlegend=False,
         )
     return fig
+
+
+@st.cache_data(show_spinner=False)
+def generate_fluid_snapshot_png(
+    sim: Dict[str, Any],
+    params: Dict[str, Any],
+    vec_anim: Dict[str, Any],
+    frame_idx: int,
+    plane: str,
+    z_slice_cm: float | None,
+) -> bytes:
+    """Genera la ficha técnica PNG en alta resolución (3D + 2D + parámetros + ecuación vectorial)."""
+    k_idx = int(np.clip(frame_idx, 0, len(vec_anim["t"]) - 1))
+    t_k = float(vec_anim["t"][k_idx])
+    f_arr_k = float(vec_anim["f_arr"][k_idx])
+    pr = sim["vel_params"]
+    g = sim["geom"]
+    kpis = sim["kpis"]
+    cfg = sim["cfg"]
+    blades = cfg["blades"]
+    w_vis = vec_anim["w_vis"]
+    R_m, H_m = pr["R"], pr["H"]
+    Rc, Hc, zi, d = g["T"] * 50, g["H"] * 100, g["zi"] * 100, g["D"] * 100
+    vmax_3d = vec_anim["vmax_global"]
+
+    pastel_cmap = LinearSegmentedColormap.from_list(
+        "pastel_vel_3d", ["#74c0fc", "#63e6be", "#ffe066", "#ff6b6b"]
+    )
+    pastel_cmap_2d = LinearSegmentedColormap.from_list(
+        "pastel_vel_2d", ["#e7f5ff", "#74c0fc", "#63e6be", "#ffe066", "#ff6b6b"]
+    )
+
+    fig = plt.figure(figsize=(14.5, 9.6), dpi=150, facecolor="#fcfcfd")
+    try:
+        gs = GridSpec(3, 2, figure=fig, height_ratios=[0.11, 0.56, 0.33], hspace=0.28, wspace=0.18)
+
+        # Banda superior
+        ax_head = fig.add_subplot(gs[0, :])
+        ax_head.axis("off")
+        ax_head.add_patch(
+            plt.Rectangle((0.0, 0.05), 1.0, 0.90, facecolor="#edf2ff", edgecolor="#bac8ff", linewidth=1.5, transform=ax_head.transAxes)
+        )
+        ax_head.text(
+            0.02, 0.64,
+            "REPORTE INSTANTÁNEO DEL CAMPO VECTORIAL DE VELOCIDADES (DINÁMICA DE FLUIDOS)",
+            fontsize=13, fontweight="bold", color="#1e293b", va="center", transform=ax_head.transAxes,
+        )
+        ax_head.text(
+            0.02, 0.25,
+            f"Configuración: {params['impeller']}  |  Velocidad: {params['rpm']} RPM  |  "
+            f"Régimen: {kpis['regime']} (Re = {kpis['re']:,.0f})  |  Instante: t = {t_k:.1f} s / 10.0 s",
+            fontsize=9.6, color="#334155", va="center", transform=ax_head.transAxes,
+        )
+
+        # Panel 3D
+        ax3d = fig.add_subplot(gs[1, 0], projection="3d", facecolor="#f8fafc")
+        th_c = np.linspace(0, 2 * np.pi, 36)
+        z_c = np.linspace(0, Hc, 10)
+        thm, zm = np.meshgrid(th_c, z_c)
+        ax3d.plot_wireframe(Rc * np.cos(thm), Rc * np.sin(thm), zm, color="#cbd5e1", alpha=0.35, rstride=3, cstride=4, linewidth=0.6)
+        ax3d.plot([0, 0], [0, 0], [Hc * 1.02, zi], color="#94a3b8", linewidth=2.2)
+
+        ix, iy, iz = _impeller_lines(cfg["kind"], blades, d, zi, float(vec_anim["angle_imp"][k_idx]))
+        col_imp = "#4dabf7" if cfg["kind"] == "spin_only" else "#fcc419"
+        # Separar segmentos con None
+        seg_x, seg_y, seg_z = [], [], []
+        for xi, yi, zii in zip(ix, iy, iz):
+            if xi is None:
+                if seg_x:
+                    ax3d.plot(seg_x, seg_y, seg_z, color=col_imp, linewidth=2.2)
+                    seg_x, seg_y, seg_z = [], [], []
+            else:
+                seg_x.append(xi)
+                seg_y.append(yi)
+                seg_z.append(zii)
+
+        xk, yk, zk = vec_anim["x"][k_idx], vec_anim["y"][k_idx], vec_anim["z"][k_idx]
+        ux, uy, uz = vec_anim["vx"][k_idx], vec_anim["vy"][k_idx], vec_anim["vz"][k_idx]
+        spdk = vec_anim["speed"][k_idx]
+        scale_3d = (0.24 * Rc) / max(vmax_3d, 1e-6)
+        n_bins = 8
+        edges = np.linspace(0.0, vmax_3d + 1e-9, n_bins + 1)
+        for b in range(n_bins):
+            m = (spdk >= edges[b]) & (spdk <= edges[b + 1])
+            if np.any(m):
+                c_val = pastel_cmap((b + 0.5) / n_bins)
+                ax3d.quiver(
+                    xk[m], yk[m], zk[m], ux[m] * scale_3d, uy[m] * scale_3d, uz[m] * scale_3d,
+                    color=c_val, arrow_length_ratio=0.32, linewidth=1.2, normalize=False,
+                )
+        ax3d.set_xlim(-Rc * 1.05, Rc * 1.05)
+        ax3d.set_ylim(-Rc * 1.05, Rc * 1.05)
+        ax3d.set_zlim(0, Hc)
+        ax3d.set_xlabel("X (cm)", fontsize=8.5)
+        ax3d.set_ylabel("Y (cm)", fontsize=8.5)
+        ax3d.set_zlabel("Z (cm)", fontsize=8.5)
+        ax3d.set_title(f"Campo Vectorial 3D — t = {t_k:.1f} s", fontsize=11, fontweight="bold", color="#1e293b", pad=8)
+        sm3d = ScalarMappable(norm=Normalize(0.0, vmax_3d), cmap=pastel_cmap)
+        sm3d.set_array([])
+        cb3d = fig.colorbar(sm3d, ax=ax3d, shrink=0.68, pad=0.14)
+        cb3d.set_label("|v| (m/s)", fontsize=8.5)
+
+        # Panel 2D
+        ax2d = fig.add_subplot(gs[1, 1], facecolor="#f8fafc")
+        vmax_2d = kpis["v_max_ms"] * 1.15 or 1.0
+        if plane == "Meridional (r–z)":
+            xg = np.linspace(-Rc, Rc, 81)
+            zg = np.linspace(0.0, Hc, 61)
+            xx, zz = np.meshgrid(xg, zg)
+            th_h = np.where(xx >= 0.0, 0.0, np.pi)
+            vr_h, vz_h, vt_h, _ = _fluid_velocity_transient(np.abs(xx) / 100.0, th_h, zz / 100.0, t_k, pr, blades, w_vis)
+            vmag_h = np.sqrt(vr_h**2 + vz_h**2 + vt_h**2)
+            im = ax2d.imshow(
+                vmag_h, extent=[-Rc, Rc, 0.0, Hc],
+                origin="lower", cmap=pastel_cmap_2d, vmin=0.0, vmax=vmax_2d,
+            )
+            qx = np.linspace(-0.90 * Rc, 0.90 * Rc, 13)
+            qz = np.linspace(0.08 * Hc, 0.92 * Hc, 10)
+            qxx, qzz = np.meshgrid(qx, qz)
+            qm = np.abs(qxx) >= 0.06 * Rc
+            vr_q, vz_q, _, _ = _fluid_velocity_transient(
+                np.abs(qxx[qm]) / 100.0, np.where(qxx[qm] >= 0.0, 0.0, np.pi), qzz[qm] / 100.0, t_k, pr, blades, w_vis
+            )
+            ax2d.quiver(
+                qxx[qm], qzz[qm], vr_q * np.sign(qxx[qm]), vz_q,
+                color="#1e293b", scale=max(kpis["v_circ_max_ms"], 1e-4) * 11.0, width=0.004,
+            )
+            ax2d.plot([-Rc, Rc, Rc, -Rc, -Rc], [0, 0, Hc, Hc, 0], color="#64748b", linewidth=1.6)
+            ax2d.plot([0, 0], [Hc, zi], color="#475569", linewidth=2.0)
+            r_c = 0.5 * d
+            if cfg["kind"] == "spin_only":
+                ax2d.plot([-r_c, r_c, r_c, -r_c, -r_c], [zi * 0.4, zi * 0.4, zi * 2.3, zi * 2.3, zi * 0.4], color="#4dabf7", linewidth=2.2)
+            else:
+                ax2d.plot([-r_c, r_c], [zi, zi], color="#fcc419", linewidth=3.5)
+            ax2d.set_xlim(-Rc * 1.06, Rc * 1.06)
+            ax2d.set_ylim(0.0, Hc * 1.03)
+            ax2d.set_xlabel("Posición radial x (cm)", fontsize=8.5)
+            ax2d.set_ylabel("Altura z (cm)", fontsize=8.5)
+            ax2d.set_title(f"Corte 2D Meridional (r–z) — t = {t_k:.1f} s", fontsize=11, fontweight="bold", color="#1e293b", pad=8)
+        else:
+            z_cm = z_slice_cm if z_slice_cm is not None else zi
+            z_m = z_cm / 100.0
+            grid = np.linspace(-Rc, Rc, 81)
+            xx, yy = np.meshgrid(grid, grid)
+            rr_m = np.hypot(xx, yy) / 100.0
+            vr_h, vz_h, vt_h, _ = _fluid_velocity_transient(rr_m, np.arctan2(yy, xx), np.full_like(rr_m, z_m), t_k, pr, blades, w_vis)
+            vmag_h = np.where(rr_m <= R_m, np.sqrt(vr_h**2 + vz_h**2 + vt_h**2), np.nan)
+            im = ax2d.imshow(
+                vmag_h, extent=[-Rc, Rc, -Rc, Rc],
+                origin="lower", cmap=pastel_cmap_2d, vmin=0.0, vmax=vmax_2d,
+            )
+            qp = np.linspace(-0.90 * Rc, 0.90 * Rc, 14)
+            qxx, qyy = np.meshgrid(qp, qp)
+            qrr_m = np.hypot(qxx, qyy) / 100.0
+            qm = (qrr_m >= 0.08 * R_m) & (qrr_m <= 0.93 * R_m)
+            qxv, qyv, qrv = qxx[qm], qyy[qm], qrr_m[qm]
+            vr_q, _, vt_q, _ = _fluid_velocity_transient(qrv, np.arctan2(qyv, qxv), np.full_like(qrv, z_m), t_k, pr, blades, w_vis)
+            rs = np.maximum(qrv * 100.0, 1e-6)
+            ax2d.quiver(
+                qxv, qyv, vr_q * (qxv / rs) - vt_q * (qyv / rs), vr_q * (qyv / rs) + vt_q * (qxv / rs),
+                color="#1e293b", scale=max(kpis["v_max_ms"], 1e-4) * 11.0, width=0.004,
+            )
+            th_r = np.linspace(0, 2 * np.pi, 120)
+            ax2d.plot(Rc * np.cos(th_r), Rc * np.sin(th_r), color="#64748b", linewidth=1.6)
+            ax2d.plot((d / 2.0) * np.cos(th_r), (d / 2.0) * np.sin(th_r), color=col_imp, linewidth=2.2, linestyle="--")
+            ax2d.set_xlim(-Rc * 1.06, Rc * 1.06)
+            ax2d.set_ylim(-Rc * 1.06, Rc * 1.06)
+            ax2d.set_xlabel("x (cm)", fontsize=8.5)
+            ax2d.set_ylabel("y (cm)", fontsize=8.5)
+            ax2d.set_title(f"Corte 2D Horizontal (x–y, z={z_cm:.1f} cm) — t = {t_k:.1f} s", fontsize=10.5, fontweight="bold", color="#1e293b", pad=8)
+
+        ax2d.set_aspect("equal")
+        cb2d = fig.colorbar(im, ax=ax2d, shrink=0.78, pad=0.04)
+        cb2d.set_label("|v| (m/s)", fontsize=8.5)
+
+        # Tarjeta inferior izquierda: Parámetros y KPIs
+        ax_p = fig.add_subplot(gs[2, 0])
+        ax_p.axis("off")
+        ax_p.add_patch(
+            plt.Rectangle((0.0, 0.0), 1.0, 1.0, facecolor="#f8fafc", edgecolor="#cbd5e1", linewidth=1.2, transform=ax_p.transAxes)
+        )
+        ax_p.text(0.03, 0.88, "PARÁMETROS DE CONFIGURACIÓN Y RESULTADOS", fontsize=10, fontweight="bold", color="#1e293b", transform=ax_p.transAxes)
+        plane_label = plane if plane == "Meridional (r–z)" else f"{plane} (z={z_slice_cm:.1f} cm)" if z_slice_cm is not None else plane
+        param_lines = [
+            f"• Impulsor / Modo: {params['impeller']}",
+            f"• Tanque T: {params['tank_d_cm']:.1f} cm   |   D/T: {params['d_over_t']:.2f}   |   Velocidad: {params['rpm']} RPM",
+            f"• Viscosidad: {params['mu_mpas']:.1f} mPa·s   |   Índice de flujo n: {params['n_index']:.2f}",
+            f"• Corte 2D: {plane_label}   |   Escala Kolmogorov η_K: {kpis['eta_um']:.0f} µm",
+            f"• Potencia P: {kpis['power_w']:.2f} W ({kpis['p_over_v']:.0f} W/m³)   |   Tiempo de mezcla: {kpis['t_mix']:.1f} s",
+            f"• |v| máx en t={t_k:.1f} s: {float(np.max(spdk)):.3f} m/s   |   Factor arranque f(t): {f_arr_k:.3f}",
+        ]
+        ax_p.text(0.03, 0.77, "\n".join(param_lines), fontsize=8.8, color="#334155", va="top", linespacing=1.48, transform=ax_p.transAxes)
+
+        # Tarjeta inferior derecha: Ecuación Vectorial
+        ax_eq = fig.add_subplot(gs[2, 1])
+        ax_eq.axis("off")
+        ax_eq.add_patch(
+            plt.Rectangle((0.0, 0.0), 1.0, 1.0, facecolor="#f8fafc", edgecolor="#748ffc", linewidth=1.4, transform=ax_eq.transAxes)
+        )
+        ax_eq.text(0.03, 0.88, "ECUACIÓN VECTORIAL DEL CAMPO DE VELOCIDADES", fontsize=10, fontweight="bold", color="#1e293b", transform=ax_eq.transAxes)
+        eq_lines = [
+            r"$\mathbf{v}(r,\theta,z,t) = v_r\,\hat{e}_r + v_\theta\,\hat{e}_\theta + v_z\,\hat{e}_z,\ \ v_x=v_r\cos\theta-v_\theta\sin\theta,\ \ v_y=v_r\sin\theta+v_\theta\cos\theta$",
+            r"$v_z = \pm f(t)\,g\,v_c[1 - 2(r/R)^2]\sin(\pi s),\ \ v_r = \mp f(t)\,g\,v_c\frac{\pi R}{2 L_z}\frac{r}{R}[1-(r/R)^2]\cos(\pi s)$",
+            r"$v_\theta = f(t)\,g\,v_{\theta,0}\,\psi(r)[0.6 + 0.4\,e^{-((z-z_i)/(0.3H))^2}],\ \ f(t)=0.25+0.75(1-e^{-t/1.8})$",
+            r"$v_c=%.3f\ \mathrm{m/s},\ \ v_{\theta,0}=%.3f\ \mathrm{m/s},\ \ R=%.2f\ \mathrm{m},\ \ H=%.2f\ \mathrm{m},\ \ z_i=%.3f\ \mathrm{m},\ \ f(t)=%.3f$"
+            % (pr["vc"], pr["vth"], R_m, H_m, pr["zi"], f_arr_k),
+        ]
+        y_pos = 0.74
+        for line in eq_lines:
+            ax_eq.text(0.03, y_pos, line, fontsize=7.6, color="#1e293b", va="top", transform=ax_eq.transAxes)
+            y_pos -= 0.175
+
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
+        return buf.getvalue()
+    finally:
+        plt.close(fig)
+
+
+def generate_vortex_traces_csv(sim: Dict[str, Any], params: Dict[str, Any]) -> bytes:
+    """Genera el archivo CSV con las coordenadas y velocidades de todas las trazas de vórtices."""
+    vt = sim["vortex_traces"]
+    n_tr, n_pts = vt["x_cm"].shape
+    lines = ["trace_id,step,t_s,x_cm,y_cm,z_cm,r_cm,vx_ms,vy_ms,vz_ms,v_mag_ms,impeller,rpm,mu_mpas"]
+    imp_label = params["impeller"].replace(",", ";")
+    rpm_v = params["rpm"]
+    mu_v = params["mu_mpas"]
+    for i in range(n_tr):
+        for s in range(n_pts):
+            lines.append(
+                f"{i + 1},{s},{vt['t_s'][s]:.4f},"
+                f"{vt['x_cm'][i, s]:.4f},{vt['y_cm'][i, s]:.4f},{vt['z_cm'][i, s]:.4f},{vt['r_cm'][i, s]:.4f},"
+                f"{vt['vx'][i, s]:.5f},{vt['vy'][i, s]:.5f},{vt['vz'][i, s]:.5f},{vt['speed'][i, s]:.5f},"
+                f"\"{imp_label}\",{rpm_v},{mu_v}"
+            )
+    return "\n".join(lines).encode("utf-8")
+
+
+@st.cache_data(show_spinner=False)
+def generate_vortex_traces_png(sim: Dict[str, Any], params: Dict[str, Any]) -> bytes:
+    """Genera la imagen PNG con las trazas de vórtices 3D, corte meridional (r, z) y métricas."""
+    vt = sim["vortex_traces"]
+    g = sim["geom"]
+    kpis = sim["kpis"]
+    cfg = sim["cfg"]
+    Rc, Hc, zi, d = g["T"] * 50, g["H"] * 100, g["zi"] * 100, g["D"] * 100
+    vmax = float(np.max(vt["speed"])) or 1.0
+
+    pastel_cmap = LinearSegmentedColormap.from_list(
+        "pastel_vortex", ["#74c0fc", "#63e6be", "#ffe066", "#ff6b6b"]
+    )
+    fig = plt.figure(figsize=(14.0, 8.8), dpi=150, facecolor="#fcfcfd")
+    try:
+        gs = GridSpec(3, 2, figure=fig, height_ratios=[0.11, 0.60, 0.29], hspace=0.28, wspace=0.18)
+
+        ax_head = fig.add_subplot(gs[0, :])
+        ax_head.axis("off")
+        ax_head.add_patch(
+            plt.Rectangle((0.0, 0.05), 1.0, 0.90, facecolor="#edf2ff", edgecolor="#bac8ff", linewidth=1.5, transform=ax_head.transAxes)
+        )
+        ax_head.text(
+            0.02, 0.64,
+            f"TRAZAS DE VÓRTICES 3D Y LÍNEAS DE CORRIENTE — {params['impeller'].upper()}",
+            fontsize=12.5, fontweight="bold", color="#1e293b", va="center", transform=ax_head.transAxes,
+        )
+        ax_head.text(
+            0.02, 0.25,
+            f"Tanque T = {params['tank_d_cm']:.1f} cm  |  D/T = {params['d_over_t']:.2f}  |  {params['rpm']} RPM  |  "
+            f"Viscosidad: {params['mu_mpas']:.1f} mPa·s (n = {params['n_index']:.2f})  |  Re = {kpis['re']:,.0f} ({kpis['regime']})",
+            fontsize=9.5, color="#334155", va="center", transform=ax_head.transAxes,
+        )
+
+        # Panel 3D de trazas
+        ax3d = fig.add_subplot(gs[1, 0], projection="3d", facecolor="#f8fafc")
+        th_c = np.linspace(0, 2 * np.pi, 36)
+        z_c = np.linspace(0, Hc, 10)
+        thm, zm = np.meshgrid(th_c, z_c)
+        ax3d.plot_wireframe(Rc * np.cos(thm), Rc * np.sin(thm), zm, color="#cbd5e1", alpha=0.35, rstride=3, cstride=4, linewidth=0.6)
+        ax3d.plot([0, 0], [0, 0], [Hc * 1.02, zi], color="#94a3b8", linewidth=2.2)
+
+        ix, iy, iz = _impeller_lines(cfg["kind"], cfg["blades"], d, zi, 0.0)
+        col_imp = "#4dabf7" if cfg["kind"] == "spin_only" else "#fcc419"
+        sx, sy, sz = [], [], []
+        for xi, yi, zii in zip(ix, iy, iz):
+            if xi is None:
+                if sx:
+                    ax3d.plot(sx, sy, sz, color=col_imp, linewidth=2.2)
+                    sx, sy, sz = [], [], []
+            else:
+                sx.append(xi)
+                sy.append(yi)
+                sz.append(zii)
+
+        n_tr, n_pts = vt["x_cm"].shape
+        for i in range(n_tr):
+            for s in range(0, n_pts - 1, 2):
+                s_end = min(s + 2, n_pts - 1)
+                v_seg = 0.5 * (vt["speed"][i, s] + vt["speed"][i, s_end])
+                ax3d.plot(
+                    vt["x_cm"][i, s:s_end + 1], vt["y_cm"][i, s:s_end + 1], vt["z_cm"][i, s:s_end + 1],
+                    color=pastel_cmap(np.clip(v_seg / vmax, 0.0, 1.0)), linewidth=1.6, alpha=0.90,
+                )
+
+        ax3d.set_xlim(-Rc * 1.05, Rc * 1.05)
+        ax3d.set_ylim(-Rc * 1.05, Rc * 1.05)
+        ax3d.set_zlim(0, Hc)
+        ax3d.set_xlabel("X (cm)", fontsize=8.5)
+        ax3d.set_ylabel("Y (cm)", fontsize=8.5)
+        ax3d.set_zlabel("Z (cm)", fontsize=8.5)
+        ax3d.set_title("Líneas de Corriente Helicoidales 3D", fontsize=11, fontweight="bold", color="#1e293b", pad=8)
+        sm3d = ScalarMappable(norm=Normalize(0.0, vmax), cmap=pastel_cmap)
+        sm3d.set_array([])
+        cb3d = fig.colorbar(sm3d, ax=ax3d, shrink=0.68, pad=0.14)
+        cb3d.set_label("|v| (m/s)", fontsize=8.5)
+
+        # Panel 2D Meridional (r, z)
+        ax2d = fig.add_subplot(gs[1, 1], facecolor="#f8fafc")
+        for i in range(n_tr):
+            side = 1.0 if i % 2 == 0 else -1.0
+            r_plot = side * vt["r_cm"][i]
+            z_plot = vt["z_cm"][i]
+            for s in range(0, n_pts - 1, 2):
+                s_end = min(s + 2, n_pts - 1)
+                v_seg = 0.5 * (vt["speed"][i, s] + vt["speed"][i, s_end])
+                ax2d.plot(
+                    r_plot[s:s_end + 1], z_plot[s:s_end + 1],
+                    color=pastel_cmap(np.clip(v_seg / vmax, 0.0, 1.0)), linewidth=1.8, alpha=0.90,
+                )
+            # Flecha direccional en mitad de la traza
+            mid = n_pts // 2
+            if mid + 1 < n_pts:
+                ax2d.annotate(
+                    "", xy=(r_plot[mid + 1], z_plot[mid + 1]), xytext=(r_plot[mid], z_plot[mid]),
+                    arrowprops=dict(arrowstyle="->", color="#1e293b", lw=1.3),
+                )
+
+        ax2d.plot([-Rc, Rc, Rc, -Rc, -Rc], [0, 0, Hc, Hc, 0], color="#64748b", linewidth=1.6)
+        ax2d.plot([0, 0], [Hc, zi], color="#475569", linewidth=2.0)
+        r_c = 0.5 * d
+        if cfg["kind"] == "spin_only":
+            ax2d.plot([-r_c, r_c, r_c, -r_c, -r_c], [zi * 0.4, zi * 0.4, zi * 2.3, zi * 2.3, zi * 0.4], color="#4dabf7", linewidth=2.2)
+        else:
+            ax2d.plot([-r_c, r_c], [zi, zi], color="#fcc419", linewidth=3.5)
+        ax2d.set_aspect("equal")
+        ax2d.set_xlim(-Rc * 1.06, Rc * 1.06)
+        ax2d.set_ylim(0.0, Hc * 1.03)
+        ax2d.set_xlabel("Posición radial (±r, cm)", fontsize=8.5)
+        ax2d.set_ylabel("Altura z (cm)", fontsize=8.5)
+        ax2d.set_title("Proyección Meridional de Vórtices (r–z)", fontsize=11, fontweight="bold", color="#1e293b", pad=8)
+        cb2d = fig.colorbar(sm3d, ax=ax2d, shrink=0.78, pad=0.04)
+        cb2d.set_label("|v| (m/s)", fontsize=8.5)
+
+        # Tarjeta inferior resumen
+        ax_bot = fig.add_subplot(gs[2, :])
+        ax_bot.axis("off")
+        ax_bot.add_patch(
+            plt.Rectangle((0.0, 0.0), 1.0, 1.0, facecolor="#f8fafc", edgecolor="#cbd5e1", linewidth=1.2, transform=ax_bot.transAxes)
+        )
+        ax_bot.text(0.02, 0.85, "RESUMEN HIDRODINÁMICO DE LAS TRAZAS DE VÓRTICES", fontsize=10, fontweight="bold", color="#1e293b", transform=ax_bot.transAxes)
+        info_txt = (
+            f"• Régimen de flujo: {kpis['regime']} (Re = {kpis['re']:,.0f})   |   Número de potencia Np: {kpis['np']:.2f}   |   "
+            f"Potencia: {kpis['power_w']:.2f} W ({kpis['p_over_v']:.0f} W/m³)\n"
+            f"• Caudal de bombeo Q: {kpis['q_pump_ls']:.2f} L/s   |   Tiempo de mezcla θ_95: {kpis['t_mix']:.1f} s   |   "
+            f"Eficiencia de circulación: {kpis['circ'] * 100:.0f}%\n"
+            f"• Velocidad máxima de circulación (r–z): {kpis['v_circ_max_ms']:.3f} m/s   |   "
+            f"Velocidad tangencial máxima (remolino): {kpis['v_theta_max_ms']:.3f} m/s   |   "
+            f"Escala de Kolmogorov η_K: {kpis['eta_um']:.0f} µm\n"
+            f"• Trazas integradas: {n_tr} líneas de corriente RK2 durante {vt['t_s'][-1]:.1f} s ({n_pts} puntos por línea)"
+        )
+        ax_bot.text(0.02, 0.68, info_txt, fontsize=9.0, color="#334155", va="top", linespacing=1.55, transform=ax_bot.transAxes)
+
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
+        return buf.getvalue()
+    finally:
+        plt.close(fig)
 
 
 def render_fluid_tab() -> None:
@@ -1652,8 +2795,43 @@ def render_fluid_tab() -> None:
         c4.metric("Tiempo de mezcla", f"{k['t_mix']:.1f} s", "Lento" if k["t_mix"] > 30 else "Rápido",
                   delta_color="inverse" if k["t_mix"] > 30 else "normal")
 
-        show_vec = st.checkbox("Mostrar vectores de líneas de flujo 3D", value=True, key="fl_vec")
-        st.plotly_chart(build_fluid_figure(sim, p, show_vec), width="stretch", key="fluid_3d", config={"displaylogo": False})
+        fv_c1, fv_c2 = st.columns(2)
+        show_vortex = fv_c1.checkbox("Mostrar trazas de vórtices 3D (líneas de corriente)", value=True, key="fl_vortex")
+        show_vec = fv_c2.checkbox("Superponer flechas de velocidad 3D", value=False, key="fl_vec")
+        st.plotly_chart(
+            build_fluid_figure(sim, p, show_vectors=show_vec, show_vortex_traces=show_vortex),
+            width="stretch", key="fluid_3d", config={"displaylogo": False},
+        )
+        st.session_state.setdefault("show_vortex_png", False)
+        vd_col1, vd_col2 = st.columns(2, gap="medium")
+        with vd_col1:
+            st.download_button(
+                "📥 Descargar Traza de Vórtices (.csv)",
+                data=generate_vortex_traces_csv(sim, p),
+                file_name=f"trazas_vortices_{p['rpm']}rpm.csv",
+                mime="text/csv",
+                width="stretch",
+                key="dl_vortex_csv",
+            )
+        with vd_col2:
+            if not st.session_state["show_vortex_png"]:
+                if st.button("🖼️ Generar Imagen de Trazas de Vórtices (.png)", key="btn_gen_vortex_png", width="stretch"):
+                    st.session_state["show_vortex_png"] = True
+                    st.rerun()
+            else:
+                vpng = generate_vortex_traces_png(sim, p)
+                st.download_button(
+                    "📥 Descargar Imagen de Trazas (.png)",
+                    data=vpng,
+                    file_name=f"trazas_vortices_{p['rpm']}rpm.png",
+                    mime="image/png",
+                    type="primary",
+                    width="stretch",
+                    key="dl_vortex_png",
+                )
+        if st.session_state["show_vortex_png"]:
+            with st.expander("👁️ Vista previa de trazas de vórtices (.png)"):
+                st.image(generate_vortex_traces_png(sim, p), width="stretch")
         ca, cb = st.columns([1.35, 1])
         ca.plotly_chart(build_np_re_figure(sim, p["impeller"]), width="stretch", key="fluid_np", config={"displaylogo": False})
         with cb:
@@ -1666,36 +2844,33 @@ def render_fluid_tab() -> None:
             )
 
         st.divider()
-        st.subheader("🧭 Campo Vectorial de Velocidades")
+        st.subheader("🧭 Campo Vectorial de Velocidades (Simulación 10 s y Captura)")
         st.caption(
-            "Inspección espacial de dirección y magnitud del flujo: conos 3D Eulerianos y cortes 2D con vectores de velocidad."
+            "Simulación animada 3D de 10 s con flechas de velocidad advectadas por los vórtices + corte 2D. "
+            "Usa el botón de pausa para congelar un segundo exacto, ver la ecuación vectorial y descargar el reporte PNG."
         )
         vk1, vk2, vk3 = st.columns(3)
         vk1.metric("|v| máxima", f"{k['v_max_ms']:.3f} m/s")
         vk2.metric("v circulación (r–z) máx", f"{k['v_circ_max_ms']:.3f} m/s")
         vk3.metric("v tangencial (remolino) máx", f"{k['v_theta_max_ms']:.3f} m/s")
 
-        vcol1, vcol2 = st.columns(2, gap="medium")
-        with vcol1:
+        st.session_state.setdefault("fl_vec_paused", False)
+        ctrl1, ctrl2, ctrl3 = st.columns([1.1, 1.3, 1.2])
+        with ctrl1:
             vdens = st.select_slider(
                 "Densidad de vectores 3D",
                 options=["Baja", "Media", "Alta"],
                 value="Media",
                 key="fl_vdens",
             )
-            st.plotly_chart(
-                build_fluid_vector_3d_figure(sim, p, vdens),
-                width="stretch",
-                key="fluid_vec_3d",
-                config={"displaylogo": False},
-            )
-        with vcol2:
+        with ctrl2:
             vplane = st.radio(
                 "Corte 2D del campo vectorial",
                 options=["Meridional (r–z)", "Horizontal (x–y)"],
                 horizontal=True,
                 key="fl_vplane",
             )
+        with ctrl3:
             z_slice = None
             if vplane == "Horizontal (x–y)":
                 max_z = max(2.0, float(p["tank_d_cm"]) - 1.0)
@@ -1708,32 +2883,132 @@ def render_fluid_tab() -> None:
                     step=0.5,
                     key="fl_vz",
                 )
-            st.plotly_chart(
-                build_fluid_vector_2d_figure(sim, p, vplane, z_slice),
+
+        vec_anim = run_fluid_vector_animation(sim["vel_params"], sim["cfg"]["kind"], sim["cfg"]["blades"], p["rpm"], vdens)
+
+        if not st.session_state["fl_vec_paused"]:
+            if st.button("⏸ Pausar en un segundo y Descargar Imagen (.png)", key="btn_fl_pause", type="secondary"):
+                st.session_state["fl_vec_paused"] = True
+                st.rerun()
+
+            vcol1, vcol2 = st.columns(2, gap="medium")
+            vcol1.plotly_chart(
+                build_fluid_vector_3d_figure(sim, p, vec_anim, paused_frame=None),
+                width="stretch",
+                key="fluid_vec_3d",
+                config={"displaylogo": False},
+            )
+            vcol2.plotly_chart(
+                build_fluid_vector_2d_figure(sim, p, vplane, z_slice, t_s=ANIM_SECONDS),
+                width="stretch",
+                key="fluid_vec_2d",
+                config={"displaylogo": False},
+            )
+        else:
+            pbar1, pbar2 = st.columns([1, 2.2])
+            with pbar1:
+                if st.button("▶ Reanudar Simulación 3D (10 s)", key="btn_fl_resume", type="primary"):
+                    st.session_state["fl_vec_paused"] = False
+                    st.rerun()
+            with pbar2:
+                pause_t = st.slider(
+                    "Instante pausado t (s)",
+                    min_value=0.0,
+                    max_value=float(ANIM_SECONDS),
+                    value=4.0,
+                    step=0.2,
+                    key="fl_pause_t",
+                )
+            frame_idx = int(np.clip(round(pause_t / (ANIM_SECONDS / N_FRAMES)), 0, N_FRAMES))
+
+            vcol1, vcol2 = st.columns(2, gap="medium")
+            vcol1.plotly_chart(
+                build_fluid_vector_3d_figure(sim, p, vec_anim, paused_frame=frame_idx),
+                width="stretch",
+                key="fluid_vec_3d",
+                config={"displaylogo": False},
+            )
+            vcol2.plotly_chart(
+                build_fluid_vector_2d_figure(sim, p, vplane, z_slice, t_s=pause_t),
                 width="stretch",
                 key="fluid_vec_2d",
                 config={"displaylogo": False},
             )
 
+            st.markdown("**Ecuación Vectorial en el instante pausado:**")
+            st.latex(
+                r"\mathbf{v}(r,\theta,z,t) = v_r\,\hat{e}_r + v_\theta\,\hat{e}_\theta + v_z\,\hat{e}_z,\qquad "
+                r"v_z = \pm f(t)\,g\,v_c\!\left[1-2(r/R)^2\right]\sin(\pi s),\quad "
+                r"f(t) = 0.25 + 0.75\left(1 - e^{-t/1.8}\right)"
+            )
+            png_bytes = generate_fluid_snapshot_png(sim, p, vec_anim, frame_idx, vplane, z_slice)
+            st.download_button(
+                label=f"📥 Descargar Imagen del Campo de Velocidades (.png) — t = {pause_t:.1f} s",
+                data=png_bytes,
+                file_name=f"campo_velocidades_{p['rpm']}rpm_t{pause_t:.1f}s.png",
+                mime="image/png",
+                type="primary",
+                width="stretch",
+                key="dl_fluid_vec_png",
+            )
+            with st.expander("👁️ Vista previa de la imagen PNG descargable"):
+                st.image(png_bytes, width="stretch")
+
 
 # =====================================================================
 # 6. MÓDULO 4 — BIOPROCESO, MATERIALES, COSTOS Y PROTOTIPO RÁPIDO
 # =====================================================================
+def _sorted_cell_keys(reverse: bool = False) -> List[str]:
+    return sorted(
+        CELL_LINES.keys(),
+        key=lambda k: (CELL_LINES[k]["cost_medium_usd_l"], CELL_LINES[k]["cost_vial_usd"]),
+        reverse=reverse,
+    )
+
+
+def _sorted_mesh_keys(reverse: bool = False) -> List[str]:
+    return sorted(
+        MESH_MATERIALS.keys(),
+        key=lambda k: MESH_MATERIALS[k]["cost_unit_usd"],
+        reverse=reverse,
+    )
+
+
+COST_DEFAULTS = dict(
+    cell_line=_sorted_cell_keys()[0],
+    mesh_material=_sorted_mesh_keys()[0],
+    vol_l=1.0,
+    days=3,
+    vvd=1.5,
+    include_vial=True,
+    consumables_usd=40.0,
+    sort_order="Menor a mayor costo",
+)
+
+
 def render_bioprocess_tab() -> None:
     st.subheader("🧬 Catálogo Biológico, Materiales Poliméricos y Economía del Experimento")
-    st.caption("Consulta aquí propiedades de líneas celulares, medios, polímeros (Tg/Tm), costos, proveedores y prototipado rápido.")
+    st.caption("Opciones ordenadas por costo. Ajusta los parámetros de la calculadora y presiona Calcular Costos.")
+
+    sorted_cells = _sorted_cell_keys(reverse=False)
+    sorted_meshes = _sorted_mesh_keys(reverse=False)
 
     col_a, col_b = st.columns(2, gap="large")
     with col_a:
         st.markdown("#### 1. Líneas Celulares, Medios y Extracción")
-        sel_cell = st.selectbox("Inspeccionar línea celular:", list(CELL_LINES), key="cat_cell")
+        sel_cell = st.selectbox(
+            "Inspeccionar línea celular (menor a mayor costo de medio):",
+            sorted_cells,
+            format_func=lambda k: f"{k} — Medio ${CELL_LINES[k]['cost_medium_usd_l']:.1f}/L · Vial ~${CELL_LINES[k]['cost_vial_usd']:.0f}",
+            key="cat_cell",
+        )
         ci = CELL_LINES[sel_cell]
         st.markdown(
             f"""<div class="pastel-card">
             <b>Masa y Forma:</b> {ci['mass_ng']} ng/célula · {ci['shape']} · Ø {ci['diam_um']} µm<br>
             <b>Tipo de cultivo:</b> {ci['culture_type']}<br>
             <b>Tasa crecimiento máx (μ_max):</b> {ci['mu_max_h']} h⁻¹ · T óptima: {ci['t_opt_c']} °C<br>
-            <b>Medio recomendado:</b> {ci['medium']}<br>
+            <b>Medio recomendado:</b> {ci['medium']} (<b>${ci['cost_medium_usd_l']:.1f} USD/L</b>)<br>
             <b>Nutrientes específicos:</b> {ci['nutrients']}<br>
             <b>Producto obtenido:</b> {ci['product']}<br>
             <b>Extracción / Cosecha:</b> {ci['extraction']}<br>
@@ -1744,11 +3019,17 @@ def render_bioprocess_tab() -> None:
 
     with col_b:
         st.markdown("#### 2. Mallas de Acero y Polímeros Biocompatibles ($T_g$ y $T_m$)")
-        sel_mat = st.selectbox("Inspeccionar material de malla o matriz:", list(MESH_MATERIALS), key="cat_mat")
+        sel_mat = st.selectbox(
+            "Inspeccionar material de malla o matriz (menor a mayor costo):",
+            sorted_meshes,
+            format_func=lambda k: f"{k} — ~${MESH_MATERIALS[k]['cost_unit_usd']:.0f} USD",
+            key="cat_mat",
+        )
         mi = MESH_MATERIALS[sel_mat]
         tg_txt = f"{mi['tg_c']} °C" if mi["tg_c"] is not None else "N/A (Metal)"
         st.markdown(
             f"""<div class="pastel-card">
+            <b>Costo módulo/lote ref.:</b> <b>${mi['cost_unit_usd']:.0f} USD</b><br>
             <b>Rango de poro / tejido:</b> {mi['pore_range']} · Área abierta: {int(mi['open_area']*100)} %<br>
             <b>Temperatura transición vítrea (Tg):</b> {tg_txt} · <b>Fusión (Tm):</b> {mi['tm_c']} °C<br>
             <b>Extrusión / Fundición longitudinal:</b> {mi['extrudable']}<br>
@@ -1759,28 +3040,129 @@ def render_bioprocess_tab() -> None:
         )
 
     st.divider()
-    col_c1, col_c2 = st.columns([1.2, 1], gap="large")
+    cp = _form_defaults("cost_params", COST_DEFAULTS)
+    rev_sort = cp["sort_order"] == "Mayor a menor costo"
+    form_cells = _sorted_cell_keys(reverse=rev_sort)
+    form_meshes = _sorted_mesh_keys(reverse=rev_sort)
+
+    col_c1, col_c2 = st.columns([1.05, 1.35], gap="large")
     with col_c1:
-        st.markdown("#### 3. Calculadora Rápida de Costos de Medio de Cultivo")
-        vol_l = st.slider("Volumen útil del biorreactor (Litros)", 0.25, 10.0, 1.0, 0.25, key="cost_vol")
-        days_c = st.radio("Duración del ensayo", [1, 3, 7], index=1, horizontal=True, key="cost_days")
-        vvd_c = st.slider("Perfusión (VVD)", 0.5, 3.0, 1.5, 0.25, key="cost_vvd")
-        total_liters = vol_l * (1.0 + vvd_c * days_c)
-        est_cost = total_liters * ci["cost_medium_usd_l"]
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Medio total requerido", f"{total_liters:.1f} L")
-        m2.metric("Costo medio estimado", f"${est_cost:,.0f} USD")
-        m3.metric("Precio por Litro", f"${ci['cost_medium_usd_l']:.1f} USD/L")
+        st.markdown("#### 3. Calculadora de Costos del Experimento")
+        with st.form("cost_form"):
+            sort_ord = st.radio(
+                "Ordenar opciones y comparativa por costo:",
+                ["Menor a mayor costo", "Mayor a menor costo"],
+                index=0 if cp["sort_order"] == "Menor a mayor costo" else 1,
+                horizontal=True,
+                key="cost_sort_ord",
+            )
+            c_sel = st.selectbox(
+                "Línea celular del ensayo",
+                form_cells,
+                index=form_cells.index(cp["cell_line"]) if cp["cell_line"] in form_cells else 0,
+                format_func=lambda k: f"{k} (${CELL_LINES[k]['cost_medium_usd_l']:.1f}/L · Vial ~${CELL_LINES[k]['cost_vial_usd']:.0f})",
+                key="cost_cell_sel",
+            )
+            m_sel = st.selectbox(
+                "Material de malla / filtro",
+                form_meshes,
+                index=form_meshes.index(cp["mesh_material"]) if cp["mesh_material"] in form_meshes else 0,
+                format_func=lambda k: f"{k} (~${MESH_MATERIALS[k]['cost_unit_usd']:.0f} USD)",
+                key="cost_mesh_sel",
+            )
+            vol_l = st.slider("Volumen útil del biorreactor (Litros)", 0.25, 10.0, float(cp["vol_l"]), 0.25, key="cost_vol")
+            days_c = st.radio("Duración del ensayo", [1, 3, 7], index=[1, 3, 7].index(cp["days"]), horizontal=True, key="cost_days")
+            vvd_c = st.slider("Perfusión (VVD)", 0.0, 4.0, float(cp["vvd"]), 0.25, key="cost_vvd")
+            inc_vial = st.checkbox("Incluir compra de vial celular inicial", value=bool(cp["include_vial"]), key="cost_vial")
+            extras = st.number_input("Consumibles / extras (mangueras, jeringas, etc. USD)", 0.0, 2000.0, float(cp["consumables_usd"]), 5.0, key="cost_extras")
+
+            if st.form_submit_button("🧮 Calcular Costos", type="primary", width="stretch"):
+                st.session_state["cost_params"] = dict(
+                    cell_line=c_sel,
+                    mesh_material=m_sel,
+                    vol_l=vol_l,
+                    days=days_c,
+                    vvd=vvd_c,
+                    include_vial=inc_vial,
+                    consumables_usd=float(extras),
+                    sort_order=sort_ord,
+                )
+
+    cp = st.session_state["cost_params"]
+    rev_final = cp["sort_order"] == "Mayor a menor costo"
+    ci_calc = CELL_LINES[cp["cell_line"]]
+    mi_calc = MESH_MATERIALS[cp["mesh_material"]]
+    total_liters = cp["vol_l"] * (1.0 + cp["vvd"] * cp["days"])
+    cost_medium = total_liters * ci_calc["cost_medium_usd_l"]
+    cost_vial = ci_calc["cost_vial_usd"] if cp["include_vial"] else 0.0
+    cost_mesh = mi_calc["cost_unit_usd"]
+    cost_total = cost_medium + cost_vial + cost_mesh + cp["consumables_usd"]
 
     with col_c2:
-        st.markdown("#### 4. Experimentación Rápida y Bajo Costo (Prototipado)")
-        st.markdown(
-            """
-            - **Bombas económicas:** Jeringas de 50 mL montadas en *syringe pump* impreso en 3D o minibombas peristálticas de 12 V con manguera de silicón grado alimenticio.
-            - **Materiales reciclables / pruebas rápidas:** Frascos de vidrio borosilicato para pruebas de agitación con imán/hélice impresa en PLA/PETG; agua + glicerina para simular viscosidades de cultivo sin gastar células reales.
-            - **Ecuaciones usadas en la app:** Modelo de Monod (crecimiento), Stokes/Saffman (corte y sustentación en malla), Fourier/Newton (calor 3D), Andrade (viscosidad vs. T) y Metzner–Otto (fluido no newtoniano).
-            """
+        st.markdown("#### Desglose y Comparativa Ordenada por Costo")
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Medio total", f"{total_liters:.1f} L")
+        m2.metric("Costo medio", f"${cost_medium:,.0f} USD", f"${ci_calc['cost_medium_usd_l']:.1f}/L", delta_color="off")
+        m3.metric("Vial + Malla + Extras", f"${cost_vial + cost_mesh + cp['consumables_usd']:,.0f} USD")
+        m4.metric("Costo Total Estimado", f"${cost_total:,.0f} USD", f"${cost_total / cp['days']:,.0f}/día", delta_color="off")
+
+        comp_rows = []
+        for cname, cdata in CELL_LINES.items():
+            cm = total_liters * cdata["cost_medium_usd_l"]
+            cv = cdata["cost_vial_usd"] if cp["include_vial"] else 0.0
+            ct = cm + cv + cost_mesh + cp["consumables_usd"]
+            comp_rows.append(
+                dict(
+                    linea=cname,
+                    medio_usd=cm,
+                    vial_usd=cv,
+                    malla_extras_usd=cost_mesh + cp["consumables_usd"],
+                    total_usd=ct,
+                )
+            )
+        comp_rows.sort(key=lambda r: r["total_usd"], reverse=rev_final)
+
+        fig_cost = go.Figure()
+        labels_c = [r["linea"].split(" (")[0] for r in comp_rows]
+        fig_cost.add_trace(go.Bar(y=labels_c, x=[r["medio_usd"] for r in comp_rows], name="Medio cultivo", orientation="h", marker_color="#74c0fc"))
+        fig_cost.add_trace(go.Bar(y=labels_c, x=[r["vial_usd"] for r in comp_rows], name="Vial celular", orientation="h", marker_color="#ffa94d"))
+        fig_cost.add_trace(go.Bar(y=labels_c, x=[r["malla_extras_usd"] for r in comp_rows], name="Malla + Extras", orientation="h", marker_color="#63e6be"))
+        fig_cost.update_layout(
+            barmode="stack",
+            template="plotly_white",
+            height=265,
+            margin=dict(l=10, r=10, t=35, b=10),
+            title=f"Comparativa ordenada ({cp['sort_order']}) — {cp['days']} día(s), {cp['vol_l']} L, {cp['vvd']} VVD",
+            xaxis_title="Costo estimado (USD)",
+            yaxis=dict(autorange="reversed"),
+            legend=dict(orientation="h", y=-0.28),
         )
+        st.plotly_chart(fig_cost, width="stretch", key="cost_bar_chart", config={"displaylogo": False})
+
+        st.dataframe(
+            [
+                {
+                    "Línea Celular": r["linea"],
+                    "Medio (USD)": f"${r['medio_usd']:,.1f}",
+                    "Vial (USD)": f"${r['vial_usd']:,.0f}",
+                    "Malla+Extras (USD)": f"${r['malla_extras_usd']:,.0f}",
+                    "Total (USD)": f"${r['total_usd']:,.1f}",
+                }
+                for r in comp_rows
+            ],
+            width="stretch",
+            hide_index=True,
+        )
+
+    st.divider()
+    st.markdown("#### 4. Experimentación Rápida y Bajo Costo (Prototipado)")
+    st.markdown(
+        """
+        - **Bombas económicas:** Jeringas de 50 mL montadas en *syringe pump* impreso en 3D o minibombas peristálticas de 12 V con manguera de silicón grado alimenticio.
+        - **Materiales reciclables / pruebas rápidas:** Frascos de vidrio borosilicato para pruebas de agitación con imán/hélice impresa en PLA/PETG; agua + glicerina para simular viscosidades de cultivo sin gastar células reales.
+        - **Ecuaciones usadas en la app:** Modelo de Monod (crecimiento), Stokes/Saffman (corte y sustentación en malla), Fourier/Newton (calor 3D), Andrade (viscosidad vs. T) y Metzner–Otto (fluido no newtoniano).
+        """
+    )
 
 
 # =====================================================================
